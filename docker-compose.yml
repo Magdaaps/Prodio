@@ -1,0 +1,37 @@
+version: '3.9'
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: prodio
+      POSTGRES_PASSWORD: prodio123
+      POSTGRES_DB: prodio_db
+    ports: ["5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  backend:
+    build: ./backend
+    ports: ["4000:4000"]
+    environment:
+      DATABASE_URL: postgresql://prodio:prodio123@postgres:5432/prodio_db
+      REDIS_URL: redis://redis:6379
+      JWT_SEKRET: zmien_mnie_w_produkcji
+      JWT_ODSWIEZANIE_SEKRET: zmien_mnie_odswiezanie_produkcji
+      NODE_ENV: development
+    depends_on: [postgres, redis]
+    volumes: [./backend:/app, /app/node_modules]
+
+  frontend:
+    build: ./frontend
+    ports: ["5173:5173"]
+    depends_on: [backend]
+    environment:
+      VITE_API_URL: http://backend:4000
+    volumes: [./frontend:/app, /app/node_modules]
+
+volumes:
+  postgres_data:

@@ -1,0 +1,447 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Uzytkownik {
+  id                 Int                 @id @default(autoincrement())
+  email              String              @unique
+  haslo              String
+  imie               String
+  nazwisko           String
+  rola               RolaUzytkownika     @default(PRACOWNIK)
+  aktywny            Boolean             @default(true)
+  utworzonyW         DateTime            @default(now())
+  zaktualizowanyW    DateTime            @updatedAt
+  tokenyOdswiezania  TokenOdswiezania[]
+
+  @@map("uzytkownicy")
+}
+
+model TokenOdswiezania {
+  id           Int         @id @default(autoincrement())
+  token        String      @unique
+  uzytkownik   Uzytkownik  @relation(fields: [uzytkownikId], references: [id], onDelete: Cascade)
+  uzytkownikId Int
+  wygasaW      DateTime
+  utworzonyW   DateTime    @default(now())
+
+  @@map("tokeny_odswiezania")
+}
+
+model PanelMeldunkowy {
+  id                        Int       @id @default(autoincrement())
+  nazwa                     String
+  login                     String?
+  haslo                     String?
+  geolokalizacjaWlaczona    Boolean   @default(false)
+  pokazLokalizacjeTimeline  Boolean   @default(false)
+  aktywny                   Boolean   @default(true)
+  maszyny                   Maszyna[]
+
+  @@map("panele_meldunkowe")
+}
+
+model Maszyna {
+  id                  Int                    @id @default(autoincrement())
+  nazwa               String
+  panel               PanelMeldunkowy?       @relation(fields: [panelId], references: [id])
+  panelId             Int?
+  kosztRbh            Decimal                @default(0) @db.Decimal(10, 2)
+  kosztUstawiania     Decimal                @default(0) @db.Decimal(10, 2)
+  waluta              String                 @default("PLN")
+  aktywna             Boolean                @default(true)
+  maszynaKoncowa      Boolean                @default(false)
+  kolejnosc           Int                    @default(0)
+  uwagi               String?
+  iloscZmian          Int                    @default(1)
+  iloscGodzinDzien    Int                    @default(8)
+  bomOperacji         BomOperacji[]
+  bomSurowcow         BomSurowcow[]
+  zlecaniaProdukcyjne ZlecenieProdukcyjne[]
+
+  @@map("maszyny")
+}
+
+model Pracownik {
+  id               Int      @id @default(autoincrement())
+  imie             String
+  nazwisko         String
+  pin              String?
+  kodQr            String?
+  stanowisko       String?
+  stawkaGodzinowa  Decimal  @default(0) @db.Decimal(10, 2)
+  kolorAvatara     String   @default("#3B82F6")
+  aktywny          Boolean  @default(true)
+  utworzonyW       DateTime @default(now())
+  rejestracje      RejestraCzasPracy[]
+  pauzy            Pauza[]
+  dniWolne         DzienWolny[]
+
+  @@map("pracownicy")
+}
+
+model GrupaProduktow {
+  id       Int       @id @default(autoincrement())
+  nazwa    String
+  produkty Produkt[]
+
+  @@map("grupy_produktow")
+}
+
+model Produkt {
+  id                      Int                @id @default(autoincrement())
+  idProdio                String             @unique
+  nazwa                   String
+  ean                     String?
+  dodatkoweOznaczenia     String?
+  wymiar                  String?
+  sposobPakowania         String?
+  informacjeNiewidoczne   String?
+  informacjeWidoczne      String?
+  cena                    Decimal?           @db.Decimal(10, 2)
+  waluta                  String?            @default("PLN")
+  stawkaVat               Int?               @default(23)
+  zdjecie                 String?
+  aktywny                 Boolean            @default(true)
+  grupa                   GrupaProduktow?    @relation(fields: [grupaId], references: [id])
+  grupaId                 Int?
+  klient                  Klient?            @relation(fields: [klientId], references: [id])
+  klientId                Int?
+  bomOperacji             BomOperacji[]
+  bomSurowcow             BomSurowcow[]
+  zamowienia              PozycjaZamowienia[]
+
+  @@map("produkty")
+}
+
+model BomOperacji {
+  id               Int      @id @default(autoincrement())
+  produkt          Produkt  @relation(fields: [produktId], references: [id], onDelete: Cascade)
+  produktId        Int
+  maszyna          Maszyna  @relation(fields: [maszynaId], references: [id])
+  maszynaId        Int
+  normaSztGodz     Decimal  @default(0) @db.Decimal(10, 2)
+  parametry        String?
+  tagi             String[]
+  maszynaKoncowa   Boolean  @default(false)
+  kolejnosc        Int      @default(0)
+
+  @@map("bom_operacji")
+}
+
+model BomSurowcow {
+  id          Int      @id @default(autoincrement())
+  produkt     Produkt  @relation(fields: [produktId], references: [id], onDelete: Cascade)
+  produktId   Int
+  surowiec    Surowiec @relation(fields: [surowiecId], references: [id])
+  surowiecId  Int
+  maszyna     Maszyna? @relation(fields: [maszynaId], references: [id])
+  maszynaId   Int?
+  ilosc       Decimal  @db.Decimal(10, 4)
+  jednostka   String   @default("szt")
+
+  @@map("bom_surowcow")
+}
+
+model Klient {
+  id               Int          @id @default(autoincrement())
+  nazwa            String
+  ulica            String?
+  miasto           String?
+  kodPocztowy      String?
+  wojewodztwo      String?
+  kraj             String?
+  email            String?
+  telefon          String?
+  nip              String?
+  aktywny          Boolean      @default(true)
+  dostepB2b        Boolean      @default(false)
+  loginB2b         String?
+  hasloB2b         String?
+  utworzonyW       DateTime     @default(now())
+  produkty         Produkt[]
+  zamowienia       Zamowienie[]
+
+  @@map("klienci")
+}
+
+model Surowiec {
+  id                Int                    @id @default(autoincrement())
+  nazwa             String
+  jednostka         String                 @default("szt")
+  cena              Decimal                @default(0) @db.Decimal(10, 2)
+  waluta            String                 @default("PLN")
+  vat               Int                    @default(23)
+  aktywny           Boolean                @default(true)
+  bomSurowcow       BomSurowcow[]
+  surowceDostawcy   SurowiecDostawca[]
+  transakcje        TransakcjaMagazynowa[]
+  pozycjeZamowien   PozycjaZamowieniaDostawcy[]
+
+  @@map("surowce")
+}
+
+model Dostawca {
+  id                Int                 @id @default(autoincrement())
+  nazwa             String
+  ulica             String?
+  kodPocztowy       String?
+  miasto            String?
+  kraj              String?
+  email             String?
+  telefon           String?
+  nip               String?
+  osobaKontaktowa   String?
+  aktywny           Boolean             @default(true)
+  surowceDostawcy   SurowiecDostawca[]
+  zamowieniaDostawcy ZamowienieDostawcy[]
+
+  @@map("dostawcy")
+}
+
+model SurowiecDostawca {
+  id          Int       @id @default(autoincrement())
+  surowiec    Surowiec  @relation(fields: [surowiecId], references: [id])
+  surowiecId  Int
+  dostawca    Dostawca  @relation(fields: [dostawcaId], references: [id])
+  dostawcaId  Int
+  cenaZakupu  Decimal   @db.Decimal(10, 2)
+  waluta      String    @default("PLN")
+
+  @@unique([surowiecId, dostawcaId])
+  @@map("surowce_dostawcy")
+}
+
+model Magazyn {
+  id                  Int                    @id @default(autoincrement())
+  nazwa               String
+  aktywny             Boolean                @default(true)
+  transakcje          TransakcjaMagazynowa[]
+  transakcjeDocelowe  TransakcjaMagazynowa[] @relation("MagazynDocelowy")
+
+  @@map("magazyny")
+}
+
+model ZamowienieDostawcy {
+  id            Int                          @id @default(autoincrement())
+  numer         String                       @unique
+  dostawca      Dostawca                     @relation(fields: [dostawcaId], references: [id])
+  dostawcaId    Int
+  status        StatusZamowieniaDostawcy     @default(OCZEKUJE)
+  dataZlozenia  DateTime                     @default(now())
+  dataDostawy   DateTime?
+  uwagi         String?
+  pozycje       PozycjaZamowieniaDostawcy[]
+  utworzonyW    DateTime                     @default(now())
+
+  @@map("zamowienia_dostawcow")
+}
+
+model PozycjaZamowieniaDostawcy {
+  id            Int                 @id @default(autoincrement())
+  zamowienie    ZamowienieDostawcy  @relation(fields: [zamowienieId], references: [id], onDelete: Cascade)
+  zamowienieId  Int
+  surowiec      Surowiec            @relation(fields: [surowiecId], references: [id])
+  surowiecId    Int
+  ilosc         Decimal             @db.Decimal(10, 4)
+  cena          Decimal?            @db.Decimal(10, 2)
+
+  @@map("pozycje_zamowien_dostawcow")
+}
+
+model GrupaZamowien {
+  id          Int          @id @default(autoincrement())
+  numer       String       @unique
+  zamowienia  Zamowienie[]
+
+  @@map("grupy_zamowien")
+}
+
+model Zamowienie {
+  id               Int                @id @default(autoincrement())
+  idProdio         String             @unique
+  zewnetrznyNumer  String?
+  klient           Klient?            @relation(fields: [klientId], references: [id])
+  klientId         Int?
+  status           StatusZamowienia   @default(NOWE)
+  oczekiwanaData   DateTime?
+  grupa            GrupaZamowien?     @relation(fields: [grupaId], references: [id])
+  grupaId          Int?
+  uwagi            String?
+  utworzonyW       DateTime           @default(now())
+  zaktualizowanyW  DateTime           @updatedAt
+  pozycje          PozycjaZamowienia[]
+  zlecenia         ZlecenieProdukcyjne[]
+
+  @@map("zamowienia")
+}
+
+model PozycjaZamowienia {
+  id            Int         @id @default(autoincrement())
+  zamowienie    Zamowienie  @relation(fields: [zamowienieId], references: [id], onDelete: Cascade)
+  zamowienieId  Int
+  produkt       Produkt     @relation(fields: [produktId], references: [id])
+  produktId     Int
+  ilosc         Int
+  cena          Decimal?    @db.Decimal(10, 2)
+
+  @@map("pozycje_zamowien")
+}
+
+model ZlecenieProdukcyjne {
+  id                  Int                  @id @default(autoincrement())
+  numer               String
+  zamowienie          Zamowienie           @relation(fields: [zamowienieId], references: [id])
+  zamowienieId        Int
+  maszyna             Maszyna              @relation(fields: [maszynaId], references: [id])
+  maszynaId           Int
+  status              StatusZlecenia       @default(STOP)
+  aktywne             Boolean              @default(true)
+  iloscPlan           Int                  @default(0)
+  iloscWykonana       Int                  @default(0)
+  iloscBrakow         Int                  @default(0)
+  planowanyStart      DateTime?
+  planowanyStop       DateTime?
+  poprzednikId        Int?
+  normaSztGodz        Decimal              @default(0) @db.Decimal(10, 2)
+  przypisaniPracownicyIds Int[]            @default([])
+  tagi                String[]
+  uwagi               String?
+  maszynaKoncowa      Boolean              @default(false)
+  utworzonyW          DateTime             @default(now())
+  zaktualizowanyW     DateTime             @updatedAt
+  historiaWydajnosci  HistoriaWydajnosci[]
+
+  @@map("zlecenia_produkcyjne")
+}
+
+model HistoriaWydajnosci {
+  id                  Int                  @id @default(autoincrement())
+  zlecenie            ZlecenieProdukcyjne  @relation(fields: [zlecenieId], references: [id])
+  zlecenieId          Int
+  pracownikId         Int?
+  iloscWykonana       Int                  @default(0)
+  iloscBrakow         Int                  @default(0)
+  opisBrakow          String?
+  czasStart           DateTime
+  czasStop            DateTime?
+  kosztMaszynyPln     Decimal              @default(0) @db.Decimal(10, 2)
+  kosztPracownikaPln  Decimal              @default(0) @db.Decimal(10, 2)
+  dodanoRecznie       Boolean              @default(false)
+
+  @@map("historia_wydajnosci")
+}
+
+model Pauza {
+  id               Int       @id @default(autoincrement())
+  pracownik        Pracownik @relation(fields: [pracownikId], references: [id])
+  pracownikId      Int
+  powod            String?
+  typPauzy         TypPauzy  @default(INNE)
+  czasStart        DateTime
+  czasStop         DateTime?
+  geolokalizacja   String?
+  ip               String?
+
+  @@map("pauzy")
+}
+
+model RejestraCzasPracy {
+  id              Int       @id @default(autoincrement())
+  pracownik       Pracownik @relation(fields: [pracownikId], references: [id])
+  pracownikId     Int
+  wejscie         DateTime
+  wyjscie         DateTime?
+  zmiana          String?
+  nadgodziny      Decimal   @default(0) @db.Decimal(5, 2)
+  wejscieWyglad   DateTime?
+  wyjscieWyglad   DateTime?
+
+  @@map("rejestracja_czasu_pracy")
+}
+
+model DzienWolny {
+  id            Int       @id @default(autoincrement())
+  pracownik     Pracownik @relation(fields: [pracownikId], references: [id])
+  pracownikId   Int
+  data          DateTime  @db.Date
+  przyczyna     String?
+  zatwierdzony  Boolean   @default(false)
+
+  @@map("dni_wolne")
+}
+
+model TransakcjaMagazynowa {
+  id                Int            @id @default(autoincrement())
+  magazyn           Magazyn        @relation(fields: [magazynId], references: [id])
+  magazynId         Int
+  magazynDocelowy   Magazyn?       @relation("MagazynDocelowy", fields: [magazynDocelId], references: [id])
+  magazynDocelId    Int?
+  surowiec          Surowiec       @relation(fields: [surowiecId], references: [id])
+  surowiecId        Int
+  zlecenieId        Int?
+  typ               TypTransakcji
+  numer             String?
+  ilosc             Decimal        @db.Decimal(10, 4)
+  cena              Decimal?       @db.Decimal(10, 2)
+  uwagi             String?
+  zatwierdzone      Boolean        @default(true)
+  utworzylId        Int?
+  utworzonyW        DateTime       @default(now())
+
+  @@map("transakcje_magazynowe")
+}
+
+enum RolaUzytkownika {
+  ADMIN
+  MANAGER
+  PRACOWNIK
+}
+
+enum StatusZamowienia {
+  NOWE
+  W_REALIZACJI
+  GOTOWE
+  WYDANE
+  ZAMKNIETE
+  ANULOWANE
+  WSTRZYMANE
+  OCZEKUJE
+  PRZETERMINOWANE
+}
+
+enum StatusZlecenia {
+  STOP
+  W_TOKU
+  PAUZA
+  GOTOWE
+  ANULOWANE
+}
+
+enum TypPauzy {
+  CZYSZCZENIE
+  JEDZENIE
+  TOALETA
+  PRZERWA_REGULAMINOWA
+  INNE
+}
+
+enum TypTransakcji {
+  PRZYJECIE
+  WYDANIE
+  KOREKTA
+  PRZENIESIENIE
+}
+
+enum StatusZamowieniaDostawcy {
+  OCZEKUJE
+  WYSLANE
+  CZESCIOWO_DOSTARCZONE
+  DOSTARCZONE
+  ANULOWANE
+}
