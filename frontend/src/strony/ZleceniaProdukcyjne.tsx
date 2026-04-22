@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowUp,
   ArrowDownToLine,
+  CalendarDays,
+  Check,
+  ChevronRight,
   CircleDot,
+  Clock3,
   Copy,
+  Eye,
   ExternalLink,
   EyeOff,
+  FolderOpen,
+  GripVertical,
   ListChecks,
+  MoreHorizontal,
   Pencil,
   Play,
   Plus,
@@ -15,6 +25,7 @@ import {
   Search,
   Settings2,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -42,6 +53,8 @@ type PracownikOpcja = {
   id: number;
   imie: string;
   nazwisko: string;
+  stanowisko?: string | null;
+  aktywny?: boolean;
 };
 
 type ZlecenieLista = {
@@ -51,6 +64,8 @@ type ZlecenieLista = {
   aktywne: boolean;
   iloscPlan: number;
   iloscWykonana: number;
+  maszynaKoncowa: boolean;
+  zamowienieId: number;
   idProdio: string;
   zewnetrznyNumer: string | null;
   klient: { id: number; nazwa: string } | null;
@@ -84,6 +99,7 @@ type SzczegolyZlecenia = {
   normaSztGodz: number | string;
   przypisaniPracownicyIds: number[];
   tagi: string[];
+  parametry: string | null;
   uwagi: string | null;
   maszynaKoncowa: boolean;
   zamowienieId: number;
@@ -94,6 +110,37 @@ type SzczegolyZlecenia = {
     numer: string;
     iloscPlan: number;
     iloscWykonana: number;
+  }>;
+};
+
+type ZamowieniePlanowania = {
+  id: number;
+  idProdio: string;
+  zewnetrznyNumer: string | null;
+  oczekiwanaData: string | null;
+  status: string;
+  klient: { id: number; nazwa: string } | null;
+  pozycje: Array<{
+    id: number;
+    ilosc: number;
+    produkt: { id: number; nazwa: string; zdjecie: string | null } | null;
+  }>;
+  zlecenia: Array<{
+    id: number;
+    numer: string;
+    status: StatusZlecenia;
+    iloscPlan: number;
+    iloscWykonana: number;
+    iloscBrakow: number;
+    planowanyStart: string | null;
+    planowanyStop: string | null;
+    normaSztGodz: number | string;
+    maszynaKoncowa: boolean;
+    tagi: string[];
+    parametry: string | null;
+    uwagi: string | null;
+    przypisaniPracownicyIds: number[];
+    maszyna: { id: number; nazwa: string } | null;
   }>;
 };
 
@@ -108,6 +155,7 @@ type FormularzEdycji = {
   normaSztGodz: string;
   status: StatusZlecenia;
   tagi: string;
+  parametry: string;
   przypisaniPracownicyIds: number[];
   aktywne: boolean;
   maszynaKoncowa: boolean;
@@ -161,6 +209,7 @@ const domyslnyFormularzEdycji = (): FormularzEdycji => ({
   normaSztGodz: '',
   status: 'STOP',
   tagi: '',
+  parametry: '',
   przypisaniPracownicyIds: [],
   aktywne: true,
   maszynaKoncowa: false,
@@ -191,6 +240,36 @@ function naDateTimeLocal(wartosc: string | null) {
   return new Date(data.getTime() - przesuniecie).toISOString().slice(0, 16);
 }
 
+function pobierzDateZDateTimeLocal(wartosc: string) {
+  return wartosc ? wartosc.slice(0, 10) : '';
+}
+
+function pobierzGodzineZDateTimeLocal(wartosc: string) {
+  return wartosc && wartosc.length >= 16 ? wartosc.slice(11, 16) : '';
+}
+
+function polaczDateIGodzine(data: string, godzina: string) {
+  if (!data && !godzina) return '';
+  if (!data) return '';
+  return `${data}T${godzina || '00:00'}`;
+}
+
+function rozdzielTagi(wartosc: string) {
+  return wartosc
+    .split(',')
+    .map((element) => element.trim())
+    .filter(Boolean);
+}
+
+function pobierzNazwePracownika(pracownik: PracownikOpcja | undefined, fallbackId?: number) {
+  if (!pracownik) {
+    return fallbackId ? `Pracownik #${fallbackId}` : 'Nieznany pracownik';
+  }
+
+  const pelnaNazwa = `${pracownik.imie ?? ''} ${pracownik.nazwisko ?? ''}`.trim();
+  return pelnaNazwa || `Pracownik #${pracownik.id}`;
+}
+
 function normalizuj(wartosc: string | null | undefined) {
   return String(wartosc ?? '')
     .toLowerCase()
@@ -200,6 +279,162 @@ function normalizuj(wartosc: string | null | undefined) {
 
 function pobierzTekstStatusu(status: StatusZlecenia) {
   return STATUS_META[status]?.etykieta ?? status;
+}
+
+function formatujDatePlanowania(wartosc: string | null) {
+  if (!wartosc) return '-';
+  const data = new Date(wartosc);
+  if (Number.isNaN(data.getTime())) return '-';
+  return new Intl.DateTimeFormat('pl-PL', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(data);
+}
+
+function formatujNaglowekPlanowania(wartosc: string) {
+  if (!wartosc) {
+    return {
+      rok: '----',
+      dzien: 'Wybierz termin',
+      godzina: '--:--',
+    };
+  }
+
+  const data = new Date(wartosc);
+  if (Number.isNaN(data.getTime())) {
+    return {
+      rok: '----',
+      dzien: 'Wybierz termin',
+      godzina: '--:--',
+    };
+  }
+
+  return {
+    rok: new Intl.DateTimeFormat('pl-PL', { year: 'numeric' }).format(data),
+    dzien: new Intl.DateTimeFormat('pl-PL', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    }).format(data),
+    godzina: new Intl.DateTimeFormat('pl-PL', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(data),
+  };
+}
+
+type KartaWyboruTerminuProps = {
+  etykieta: string;
+  wartosc: string;
+  onZmiana: (wartosc: string) => void;
+  onZapisz: () => void;
+  disabled?: boolean;
+  ariaLabelZapisu: string;
+};
+
+function KartaWyboruTerminu({
+  etykieta,
+  wartosc,
+  onZmiana,
+  onZapisz,
+  disabled = false,
+  ariaLabelZapisu,
+}: KartaWyboruTerminuProps) {
+  const naglowek = formatujNaglowekPlanowania(wartosc);
+  const data = pobierzDateZDateTimeLocal(wartosc);
+  const godzina = pobierzGodzineZDateTimeLocal(wartosc);
+
+  return (
+    <div className='min-w-[280px] overflow-hidden rounded-[18px] border border-obramowanie/80 bg-tlo-glowne shadow-[0_18px_40px_rgba(15,23,42,0.24)]'>
+      <div className='flex items-start justify-between gap-3 bg-gradient-to-r from-tlo-naglowek via-slate-800 to-slate-700 px-4 py-4'>
+        <div>
+          <div className='text-[11px] font-semibold uppercase tracking-[0.22em] text-akcent/80'>{etykieta}</div>
+          <div className='mt-2 text-xs font-medium text-tekst-drugorzedny'>{naglowek.rok}</div>
+          <div className='mt-1 text-base font-semibold text-tekst-glowny'>{naglowek.dzien}</div>
+        </div>
+        <div className='rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-lg font-light tracking-[0.18em] text-white'>
+          {naglowek.godzina}
+        </div>
+      </div>
+
+      <div className='space-y-3 bg-tlo-karta/65 px-4 py-4'>
+        <label className='block'>
+          <span className='mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-tekst-drugorzedny'>
+            <CalendarDays className='h-3.5 w-3.5 text-akcent' />
+            Data
+          </span>
+          <div className='relative'>
+            <input
+              type='date'
+              value={data}
+              onChange={(event) => onZmiana(polaczDateIGodzine(event.target.value, godzina))}
+              className='h-12 w-full rounded-[14px] border border-obramowanie bg-tlo-glowne/85 px-4 pr-11 text-sm text-tekst-glowny outline-none transition focus:border-akcent [color-scheme:dark]'
+            />
+            <ChevronRight className='pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-tekst-drugorzedny' />
+          </div>
+        </label>
+
+        <label className='block'>
+          <span className='mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-tekst-drugorzedny'>
+            <Clock3 className='h-3.5 w-3.5 text-akcent' />
+            Godzina
+          </span>
+          <div className='relative'>
+            <input
+              type='time'
+              value={godzina}
+              onChange={(event) => onZmiana(polaczDateIGodzine(data, event.target.value))}
+              className='h-12 w-full rounded-[14px] border border-obramowanie bg-tlo-glowne/85 px-4 pr-11 text-sm font-medium tracking-[0.18em] text-tekst-glowny outline-none transition focus:border-akcent [color-scheme:dark]'
+            />
+            <Clock3 className='pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-akcent' />
+          </div>
+        </label>
+
+        <button
+          type='button'
+          onClick={onZapisz}
+          disabled={disabled}
+          className='inline-flex h-11 w-full items-center justify-center gap-2 rounded-[14px] border border-akcent/30 bg-akcent/10 px-4 text-sm font-semibold text-akcent transition hover:bg-akcent/20 disabled:cursor-not-allowed disabled:border-obramowanie disabled:bg-tlo-glowne disabled:text-tekst-drugorzedny'
+          aria-label={ariaLabelZapisu}
+        >
+          <Check className='h-4 w-4' />
+          Zapisz termin
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatujNormatywnyCzas(iloscPlan: number, normaSztGodz: number | string) {
+  const norma = Number(String(normaSztGodz).replace(',', '.'));
+  if (!Number.isFinite(norma) || norma <= 0 || iloscPlan <= 0) {
+    return '-';
+  }
+
+  const lacznieSekund = Math.round((iloscPlan / norma) * 60 * 60);
+  const godziny = String(Math.floor(lacznieSekund / 3600)).padStart(2, '0');
+  const minuty = String(Math.floor((lacznieSekund % 3600) / 60)).padStart(2, '0');
+  const sekundy = String(lacznieSekund % 60).padStart(2, '0');
+
+  return `${godziny}:${minuty}:${sekundy}`;
+}
+
+function pobierzKlaseStatusuPlanowania(status: string) {
+  switch (status) {
+    case 'NOWE':
+      return 'bg-amber-500/15 text-amber-300 border border-amber-500/30';
+    case 'W_REALIZACJI':
+      return 'bg-akcent/15 text-akcent border border-akcent/30';
+    case 'GOTOWE':
+      return 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+    case 'ANULOWANE':
+      return 'bg-red-500/15 text-red-300 border border-red-500/30';
+    default:
+      return 'bg-obramowanie/60 text-tekst-glowny border border-obramowanie';
+  }
 }
 
 function StatusZleceniaPill({ status }: { status: StatusZlecenia }) {
@@ -257,6 +492,9 @@ function MenuAkcji({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const portalRef = useRef<HTMLDivElement | null>(null);
+  const przyciskRef = useRef<HTMLButtonElement | null>(null);
+  const [pozycjaMenu, ustawPozycjeMenu] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
 
   useEffect(() => {
     if (!otwarte) {
@@ -264,7 +502,11 @@ function MenuAkcji({
     }
 
     const obsluzKlik = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const klikWPrzycisku = ref.current?.contains(target);
+      const klikWPortalu = portalRef.current?.contains(target);
+
+      if (!klikWPrzycisku && !klikWPortalu) {
         onClose();
       }
     };
@@ -273,47 +515,141 @@ function MenuAkcji({
     return () => document.removeEventListener('mousedown', obsluzKlik);
   }, [onClose, otwarte]);
 
+  useEffect(() => {
+    if (!otwarte || !przyciskRef.current) {
+      return;
+    }
+
+    const obliczPozycje = () => {
+      if (!przyciskRef.current) {
+        return;
+      }
+
+      const rect = przyciskRef.current.getBoundingClientRect();
+      const szerokoscMenu = 232;
+      const odstep = 8;
+      const margines = 12;
+      const preferowanyTop = rect.bottom + odstep;
+      const preferowanyBottom = rect.top - odstep;
+      const wysokoscWdol = window.innerHeight - preferowanyTop - margines;
+      const wysokoscWGore = preferowanyBottom - margines;
+      const otwierajWGore = wysokoscWdol < 260 && wysokoscWGore > wysokoscWdol;
+      const top = otwierajWGore
+        ? Math.max(margines, preferowanyBottom - Math.min(420, wysokoscWGore))
+        : preferowanyTop;
+      const maxHeight = Math.max(180, otwierajWGore ? wysokoscWGore : wysokoscWdol);
+
+      const left = Math.min(
+        window.innerWidth - szerokoscMenu - margines,
+        Math.max(margines, rect.right - szerokoscMenu)
+      );
+
+      ustawPozycjeMenu({ top, left, maxHeight });
+    };
+
+    obliczPozycje();
+    window.addEventListener('resize', obliczPozycje);
+    window.addEventListener('scroll', obliczPozycje, true);
+
+    return () => {
+      window.removeEventListener('resize', obliczPozycje);
+      window.removeEventListener('scroll', obliczPozycje, true);
+    };
+  }, [elementy.length, otwarte]);
+
   return (
     <div ref={ref} className='relative flex justify-center'>
       <button
+        ref={przyciskRef}
         type='button'
         onClick={onToggle}
-        className='inline-flex h-10 items-center justify-center px-2 text-lg font-bold tracking-[0.35em] text-akcent transition hover:text-akcent-hover'
+        className='flex h-10 w-10 items-center justify-center rounded-full border border-obramowanie bg-tlo-glowne text-akcent transition hover:border-akcent hover:bg-akcent/10'
         aria-label='Pokaz akcje'
       >
-        <span aria-hidden='true'>...</span>
+        <MoreHorizontal className='h-5 w-5' />
       </button>
 
-      {otwarte ? (
-        <div className='absolute right-0 top-11 z-30 w-[232px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl'>
-          {elementy.map((element) => (
-            <button
-              key={element.etykieta}
-              type='button'
-              disabled={element.wylaczone}
-              onClick={() => {
-                element.akcja?.();
-                onClose();
-              }}
-              className={`flex w-full items-center gap-3 px-4 py-3 text-left text-[15px] transition ${
-                element.wylaczone
-                  ? 'cursor-not-allowed text-slate-400'
-                  : element.niebezpieczna
-                    ? 'text-red-500 hover:bg-red-50'
-                    : 'text-slate-700 hover:bg-orange-50'
-              }`}
+      {otwarte && pozycjaMenu
+        ? createPortal(
+            <div
+              ref={portalRef}
+              className='fixed z-[9999] w-[232px] overflow-y-auto overflow-x-hidden rounded-xl border border-obramowanie bg-tlo-karta shadow-2xl'
+              style={{ top: pozycjaMenu.top, left: pozycjaMenu.left, maxHeight: `${pozycjaMenu.maxHeight}px` }}
             >
-              <span className='shrink-0'>{element.ikona}</span>
-              <span>{element.etykieta}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+              {elementy.map((element) => (
+                <button
+                  key={element.etykieta}
+                  type='button'
+                  disabled={element.wylaczone}
+                  onClick={() => {
+                    element.akcja?.();
+                    onClose();
+                  }}
+                  className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition ${
+                    element.wylaczone
+                      ? 'cursor-not-allowed text-tekst-drugorzedny/50'
+                      : element.niebezpieczna
+                        ? 'text-red-300 hover:bg-red-500/10'
+                        : 'text-tekst-glowny hover:bg-tlo-glowne'
+                  }`}
+                >
+                  <span className='shrink-0'>{element.ikona}</span>
+                  <span>{element.etykieta}</span>
+                </button>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+}
+
+function PoleDatyZPotwierdzeniem({
+  etykieta,
+  roboczaWartosc,
+  zatwierdzonaWartosc,
+  onZmianaRobocza,
+  onZatwierdz,
+}: {
+  etykieta: string;
+  roboczaWartosc: string;
+  zatwierdzonaWartosc: string;
+  onZmianaRobocza: (wartosc: string) => void;
+  onZatwierdz: () => void;
+}) {
+  const czyMoznaZatwierdzic = roboczaWartosc !== zatwierdzonaWartosc;
+
+  return (
+    <div className='space-y-2'>
+      <label className='mb-1.5 block text-sm font-medium text-tekst-drugorzedny'>{etykieta}</label>
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+        <input
+          type='datetime-local'
+          value={roboczaWartosc}
+          onChange={(event) => onZmianaRobocza(event.target.value)}
+          className='w-full rounded-lg border border-obramowanie bg-tlo-glowne px-4 py-2.5 text-sm text-tekst-glowny transition focus:border-akcent focus:outline-none'
+        />
+        <button
+          type='button'
+          onClick={onZatwierdz}
+          disabled={!czyMoznaZatwierdzic}
+          className='inline-flex h-[42px] shrink-0 items-center justify-center rounded-lg border border-akcent/40 bg-akcent/10 px-4 text-sm font-semibold text-akcent transition hover:bg-akcent/15 disabled:cursor-not-allowed disabled:border-obramowanie disabled:bg-tlo-naglowek disabled:text-tekst-drugorzedny'
+        >
+          Zatwierdz
+        </button>
+      </div>
+      <p className='text-xs text-tekst-drugorzedny'>
+        Zatwierdzona wartosc:{' '}
+        <span className='font-medium text-tekst-glowny'>{zatwierdzonaWartosc || 'brak'}</span>
+      </p>
     </div>
   );
 }
 
 export default function ZleceniaProdukcyjne() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const {
     strona,
     iloscNaStrone,
@@ -335,6 +671,7 @@ export default function ZleceniaProdukcyjne() {
   const [zaznaczoneIds, ustawZaznaczoneIds] = useState<number[]>([]);
   const [filtry, ustawFiltry] = useState<FiltryTabeli>(domyslneFiltry);
   const [maszynyOpcje, ustawMaszynyOpcje] = useState<OpcjaPodstawowa[]>([]);
+  const [pracownicyOpcje, ustawPracownicyOpcje] = useState<PracownikOpcja[]>([]);
   const [czyModalEdycji, ustawCzyModalEdycji] = useState(false);
   const [edytowaneId, ustawEdytowaneId] = useState<number | null>(null);
   const [szczegoly, ustawSzczegoly] = useState<SzczegolyZlecenia | null>(null);
@@ -342,13 +679,33 @@ export default function ZleceniaProdukcyjne() {
   const [bladFormularza, ustawBladFormularza] = useState('');
   const [zapisywanie, ustawZapisywanie] = useState(false);
   const [ladowanieSzczegolow, ustawLadowanieSzczegolow] = useState(false);
+  const [roboczyPlanowanyStart, ustawRoboczyPlanowanyStart] = useState('');
+  const [roboczyPlanowanyStop, ustawRoboczyPlanowanyStop] = useState('');
   const [operacjaId, ustawOperacjaId] = useState<number | null>(null);
+  const [roboczeTerminyPlanowania, ustawRoboczeTerminyPlanowania] = useState<
+    Record<number, { planowanyStart: string; planowanyStop: string }>
+  >({});
+  const [roboczeIlosciPlanowania, ustawRoboczeIlosciPlanowania] = useState<Record<number, string>>({});
+  const [roboczeTagiPlanowania, ustawRoboczeTagiPlanowania] = useState<Record<number, string>>({});
+  const [roboczeParametryPlanowania, ustawRoboczeParametryPlanowania] = useState<Record<number, string>>({});
+  const [roboczyPracownicyPlanowania, ustawRoboczyPracownicyPlanowania] = useState<Record<number, number[]>>({});
+  const [otwartePrzypisaniePracownikowId, ustawOtwartePrzypisaniePracownikowId] = useState<number | null>(null);
+  const [szukajPracownikaPlanowania, ustawSzukajPracownikaPlanowania] = useState('');
   const [pokazPanelPlanowania, ustawPokazPanelPlanowania] = useState(false);
   const [szukajPlanowania, ustawSzukajPlanowania] = useState('');
   const [otwarteWynikiPlanowania, ustawOtwarteWynikiPlanowania] = useState(false);
   const [kandydatPlanowaniaId, ustawKandydatPlanowaniaId] = useState<number | null>(null);
   const [wybraneDoPlanowaniaIds, ustawWybraneDoPlanowaniaIds] = useState<number[]>([]);
+  const [zamowieniePlanowania, ustawZamowieniePlanowania] = useState<ZamowieniePlanowania | null>(null);
+  const [ladowaniePlanowania, ustawLadowaniePlanowania] = useState(false);
+  const [bladPlanowania, ustawBladPlanowania] = useState('');
+  const [inicjalizacjaPlanowania, ustawInicjalizacjaPlanowania] = useState(false);
   const refPlanowania = useRef<HTMLDivElement | null>(null);
+  const inicjalizowaneZamowieniaRef = useRef<Set<number>>(new Set());
+  const otwarteZParametruRef = useRef<number | null>(null);
+  const zamowienieIdParam = Number(searchParams.get('zamowienieId') ?? '');
+  const zlecenieDoOtwarciaParam = Number(searchParams.get('zlecenie') ?? '');
+  const czyWidokPlanowaniaZamowienia = Number.isFinite(zamowienieIdParam) && zamowienieIdParam > 0;
 
   const opcjeStatusow = useMemo(
     () => STATUSY_ZLECEN.map((status) => ({ wartosc: status.wartosc, etykieta: status.etykieta })),
@@ -359,6 +716,23 @@ export default function ZleceniaProdukcyjne() {
     () => maszynyOpcje.map((maszyna) => ({ wartosc: String(maszyna.id), etykieta: maszyna.nazwa })),
     [maszynyOpcje]
   );
+
+  const mapaPracownikow = useMemo(
+    () => new Map(pracownicyOpcje.map((pracownik) => [pracownik.id, pracownik])),
+    [pracownicyOpcje]
+  );
+
+  const przefiltrowaniPracownicyPlanowania = useMemo(() => {
+    const wzorzec = normalizuj(szukajPracownikaPlanowania);
+
+    if (!wzorzec) {
+      return pracownicyOpcje;
+    }
+
+    return pracownicyOpcje.filter((pracownik) =>
+      normalizuj(`${pracownik.imie} ${pracownik.nazwisko} ${pracownik.stanowisko ?? ''}`).includes(wzorzec)
+    );
+  }, [pracownicyOpcje, szukajPracownikaPlanowania]);
 
   const mapaZlecen = useMemo(
     () => new Map(zlecenia.map((zlecenie) => [zlecenie.id, zlecenie])),
@@ -436,6 +810,79 @@ export default function ZleceniaProdukcyjne() {
     [mapaZlecen, wybraneDoPlanowaniaIds]
   );
 
+  const uporzadkowaneZleceniaPlanowania = useMemo(() => {
+    if (!zamowieniePlanowania) {
+      return [];
+    }
+
+    const mapaPlanowania = new Map(zamowieniePlanowania.zlecenia.map((zlecenie) => [zlecenie.id, zlecenie]));
+    const widziane = new Set<number>();
+
+    const poKolei = kolejnoscIds
+      .map((id) => mapaPlanowania.get(id))
+      .filter((wiersz): wiersz is ZamowieniePlanowania['zlecenia'][number] => Boolean(wiersz))
+      .filter((wiersz) => {
+        if (widziane.has(wiersz.id)) {
+          return false;
+        }
+        widziane.add(wiersz.id);
+        return true;
+      });
+
+    const brakujace = zamowieniePlanowania.zlecenia.filter((wiersz) => !widziane.has(wiersz.id));
+    return [...poKolei, ...brakujace];
+  }, [kolejnoscIds, zamowieniePlanowania]);
+
+  useEffect(() => {
+    if (!zamowieniePlanowania) {
+      ustawRoboczeTerminyPlanowania({});
+      ustawRoboczeIlosciPlanowania({});
+      ustawRoboczeTagiPlanowania({});
+      ustawRoboczeParametryPlanowania({});
+      ustawRoboczyPracownicyPlanowania({});
+      ustawKolejnoscIds([]);
+      return;
+    }
+
+    ustawKolejnoscIds(zamowieniePlanowania.zlecenia.map((zlecenie) => zlecenie.id));
+
+    ustawRoboczeTerminyPlanowania(
+      Object.fromEntries(
+        zamowieniePlanowania.zlecenia.map((zlecenie) => [
+          zlecenie.id,
+          {
+            planowanyStart: naDateTimeLocal(zlecenie.planowanyStart),
+            planowanyStop: naDateTimeLocal(zlecenie.planowanyStop),
+          },
+        ])
+      )
+    );
+
+    ustawRoboczeIlosciPlanowania(
+      Object.fromEntries(
+        zamowieniePlanowania.zlecenia.map((zlecenie) => [zlecenie.id, String(zlecenie.iloscPlan)])
+      )
+    );
+
+    ustawRoboczeTagiPlanowania(
+      Object.fromEntries(
+        zamowieniePlanowania.zlecenia.map((zlecenie) => [zlecenie.id, zlecenie.tagi.join(', ')])
+      )
+    );
+
+    ustawRoboczeParametryPlanowania(
+      Object.fromEntries(
+        zamowieniePlanowania.zlecenia.map((zlecenie) => [zlecenie.id, zlecenie.parametry ?? ''])
+      )
+    );
+
+    ustawRoboczyPracownicyPlanowania(
+      Object.fromEntries(
+        zamowieniePlanowania.zlecenia.map((zlecenie) => [zlecenie.id, zlecenie.przypisaniPracownicyIds ?? []])
+      )
+    );
+  }, [zamowieniePlanowania]);
+
   const zaznaczoneWidoczne =
     widoczneZlecenia.length > 0 &&
     widoczneZlecenia.every((zlecenie) => zaznaczoneIds.includes(zlecenie.id));
@@ -484,9 +931,144 @@ export default function ZleceniaProdukcyjne() {
     }
   };
 
+  const pobierzPracownikow = async () => {
+    try {
+      const odpowiedz = await klientApi.get<OdpowiedzListy<PracownikOpcja>>('/pracownicy', {
+        params: { strona: 1, iloscNaStrone: 100, sortPole: 'nazwisko', sortKierunek: 'asc' },
+      });
+      ustawPracownicyOpcje(odpowiedz.data.dane);
+    } catch {
+      ustawPracownicyOpcje([]);
+    }
+  };
+
   const pobierzSzczegolyJednorazowo = async (id: number) => {
     const odpowiedz = await klientApi.get<OdpowiedzApi<SzczegolyZlecenia>>(`/zlecenia-produkcyjne/${id}`);
     return odpowiedz.data.dane;
+  };
+
+  const pobierzZamowieniePlanowania = async () => {
+    if (!czyWidokPlanowaniaZamowienia) {
+      ustawZamowieniePlanowania(null);
+      return;
+    }
+
+    ustawLadowaniePlanowania(true);
+    ustawBladPlanowania('');
+
+    try {
+      const odpowiedz = await klientApi.get<OdpowiedzApi<ZamowieniePlanowania>>(`/zamowienia/${zamowienieIdParam}`);
+      ustawZamowieniePlanowania(odpowiedz.data.dane);
+    } catch {
+      ustawBladPlanowania('Nie udalo sie pobrac danych do planowania zamowienia.');
+      ustawZamowieniePlanowania(null);
+    } finally {
+      ustawLadowaniePlanowania(false);
+    }
+  };
+
+  const utworzOperacjeDlaZamowienia = async (zamowienie: ZamowieniePlanowania) => {
+    const pozycjeZProduktami = zamowienie.pozycje.filter((pozycja) => pozycja.produkt?.id);
+    if (pozycjeZProduktami.length === 0) {
+      return false;
+    }
+
+    ustawInicjalizacjaPlanowania(true);
+
+    try {
+      await klientApi.post('/zlecenia-produkcyjne/inicjalizuj-zamowienie', {
+        zamowienieId: String(zamowienie.id),
+      });
+      return true;
+    } catch {
+      ustawBladPlanowania('Nie udalo sie przygotowac operacji planowania dla tego zamowienia.');
+      return false;
+    } finally {
+      ustawInicjalizacjaPlanowania(false);
+    }
+  };
+
+  const odswiezWidok = async () => {
+    if (czyWidokPlanowaniaZamowienia) {
+      await pobierzZamowieniePlanowania();
+      return;
+    }
+
+    await pobierzListe();
+  };
+
+  const zapiszTerminPlanowania = async (
+    id: number,
+    pole: 'planowanyStart' | 'planowanyStop'
+  ) => {
+    const wartosc = roboczeTerminyPlanowania[id]?.[pole] ?? '';
+
+    await zaktualizujNaPodstawieSzczegolow(
+      id,
+      () => ({ [pole]: wartosc || null }),
+      pole === 'planowanyStart'
+        ? 'Nie udalo sie zapisac planowanego startu.'
+        : 'Nie udalo sie zapisac planowanego stopu.'
+    );
+  };
+
+  const zapiszIloscPlanowania = async (id: number) => {
+    const wartosc = (roboczeIlosciPlanowania[id] ?? '').trim();
+    const ilosc = Number(wartosc.replace(',', '.'));
+
+    if (!wartosc || !Number.isFinite(ilosc) || ilosc < 0) {
+      ustawBlad('Podaj poprawna ilosc planowana.');
+      return;
+    }
+
+    await zaktualizujNaPodstawieSzczegolow(
+      id,
+      () => ({ iloscPlan: String(ilosc) }),
+      'Nie udalo sie zapisac ilosci planowanej.'
+    );
+  };
+
+  const zapiszTagiPlanowania = async (id: number) => {
+    const wartosc = roboczeTagiPlanowania[id] ?? '';
+
+    await zaktualizujNaPodstawieSzczegolow(
+      id,
+      () => ({ tagi: rozdzielTagi(wartosc) }),
+      'Nie udalo sie zapisac tagow operacji.'
+    );
+  };
+
+  const zapiszParametryPlanowania = async (id: number) => {
+    const wartosc = roboczeParametryPlanowania[id] ?? '';
+
+    await zaktualizujNaPodstawieSzczegolow(
+      id,
+      () => ({ parametry: wartosc.trim() || null }),
+      'Nie udalo sie zapisac parametrow operacji.'
+    );
+  };
+
+  const zapiszPracownikowPlanowania = async (id: number) => {
+    const zapisano = await zaktualizujNaPodstawieSzczegolow(
+      id,
+      () => ({ przypisaniPracownicyIds: roboczyPracownicyPlanowania[id] ?? [] }),
+      'Nie udalo sie zapisac przypisanych pracownikow.'
+    );
+
+    if (zapisano) {
+      ustawOtwartePrzypisaniePracownikowId(null);
+      ustawSzukajPracownikaPlanowania('');
+    }
+  };
+
+  const wyczyscRoboczeDatyPlanowania = () => {
+    ustawRoboczyPlanowanyStart('');
+    ustawRoboczyPlanowanyStop('');
+  };
+
+  const zamknijModalEdycji = () => {
+    ustawCzyModalEdycji(false);
+    wyczyscRoboczeDatyPlanowania();
   };
 
   const otworzEdycje = async (id: number) => {
@@ -509,14 +1091,18 @@ export default function ZleceniaProdukcyjne() {
         normaSztGodz: String(dane.normaSztGodz ?? 0),
         status: dane.status,
         tagi: dane.tagi.join(', '),
+        parametry: dane.parametry ?? '',
         przypisaniPracownicyIds: dane.przypisaniPracownicyIds ?? [],
         aktywne: dane.aktywne,
         maszynaKoncowa: dane.maszynaKoncowa,
         uwagi: dane.uwagi ?? '',
       });
+      ustawRoboczyPlanowanyStart(naDateTimeLocal(dane.planowanyStart));
+      ustawRoboczyPlanowanyStop(naDateTimeLocal(dane.planowanyStop));
     } catch {
       ustawBladFormularza('Nie udalo sie pobrac szczegolow zlecenia.');
       ustawSzczegoly(null);
+      wyczyscRoboczeDatyPlanowania();
     } finally {
       ustawLadowanieSzczegolow(false);
     }
@@ -546,14 +1132,15 @@ export default function ZleceniaProdukcyjne() {
           .split(',')
           .map((element) => element.trim())
           .filter(Boolean),
+        parametry: formularz.parametry || null,
         przypisaniPracownicyIds: formularz.przypisaniPracownicyIds,
         aktywne: formularz.aktywne,
         maszynaKoncowa: formularz.maszynaKoncowa,
         uwagi: formularz.uwagi,
       });
 
-      ustawCzyModalEdycji(false);
-      await pobierzListe();
+      zamknijModalEdycji();
+      await odswiezWidok();
     } catch (error: unknown) {
       const wiadomosc =
         typeof error === 'object' &&
@@ -591,6 +1178,7 @@ export default function ZleceniaProdukcyjne() {
         normaSztGodz: String(dane.normaSztGodz ?? 0),
         status: dane.status,
         tagi: dane.tagi,
+        parametry: dane.parametry ?? null,
         przypisaniPracownicyIds: dane.przypisaniPracownicyIds ?? [],
         aktywne: dane.aktywne,
         maszynaKoncowa: dane.maszynaKoncowa,
@@ -598,9 +1186,11 @@ export default function ZleceniaProdukcyjne() {
         ...modyfikator(dane),
       });
 
-      await pobierzListe();
+      await odswiezWidok();
+      return true;
     } catch {
       ustawBlad(bladOperacji);
+      return false;
     } finally {
       ustawOperacjaId(null);
     }
@@ -621,7 +1211,7 @@ export default function ZleceniaProdukcyjne() {
         status: dane.status,
       });
 
-      await pobierzListe();
+      await odswiezWidok();
     } catch {
       ustawBlad('Nie udalo sie zduplikowac zlecenia produkcyjnego.');
     } finally {
@@ -641,7 +1231,7 @@ export default function ZleceniaProdukcyjne() {
       await klientApi.delete(`/zlecenia-produkcyjne/${id}`);
       ustawWybraneDoPlanowaniaIds((poprzednie) => poprzednie.filter((elementId) => elementId !== id));
       ustawZaznaczoneIds((poprzednie) => poprzednie.filter((elementId) => elementId !== id));
-      await pobierzListe();
+      await odswiezWidok();
     } catch {
       ustawBlad('Nie udalo sie usunac zlecenia produkcyjnego.');
     } finally {
@@ -649,12 +1239,34 @@ export default function ZleceniaProdukcyjne() {
     }
   };
 
-  const przesunWiersz = (id: number, typ: 'gora' | 'koniec') => {
+  const przesunWiersz = (id: number, typ: 'gora' | 'dol' | 'koniec') => {
     ustawKolejnoscIds((poprzednie) => {
-      const bezBiezacego = poprzednie.filter((elementId) => elementId !== id);
-      if (typ === 'gora') {
-        return [id, ...bezBiezacego];
+      const indeks = poprzednie.indexOf(id);
+      if (indeks === -1) {
+        return poprzednie;
       }
+
+      if (typ === 'gora') {
+        if (indeks === 0) {
+          return poprzednie;
+        }
+
+        const kopia = [...poprzednie];
+        [kopia[indeks - 1], kopia[indeks]] = [kopia[indeks], kopia[indeks - 1]];
+        return kopia;
+      }
+
+      if (typ === 'dol') {
+        if (indeks === poprzednie.length - 1) {
+          return poprzednie;
+        }
+
+        const kopia = [...poprzednie];
+        [kopia[indeks], kopia[indeks + 1]] = [kopia[indeks + 1], kopia[indeks]];
+        return kopia;
+      }
+
+      const bezBiezacego = poprzednie.filter((elementId) => elementId !== id);
       return [...bezBiezacego, id];
     });
   };
@@ -697,12 +1309,75 @@ export default function ZleceniaProdukcyjne() {
   };
 
   useEffect(() => {
+    if (czyWidokPlanowaniaZamowienia) {
+      return;
+    }
+
     void pobierzListe();
-  }, [strona, iloscNaStrone, pokazNieaktywne, ukryjGotowe, kluczSortowania, kierunekSortowania]);
+  }, [strona, iloscNaStrone, pokazNieaktywne, ukryjGotowe, kluczSortowania, kierunekSortowania, czyWidokPlanowaniaZamowienia]);
 
   useEffect(() => {
     void pobierzMaszyny();
   }, []);
+
+  useEffect(() => {
+    void pobierzPracownikow();
+  }, []);
+
+  useEffect(() => {
+    if (!czyWidokPlanowaniaZamowienia) {
+      ustawZamowieniePlanowania(null);
+      ustawBladPlanowania('');
+      return;
+    }
+
+    void pobierzZamowieniePlanowania();
+  }, [czyWidokPlanowaniaZamowienia, zamowienieIdParam]);
+
+  useEffect(() => {
+    if (!czyWidokPlanowaniaZamowienia || !zamowieniePlanowania || inicjalizacjaPlanowania) {
+      return;
+    }
+
+    if (zamowieniePlanowania.zlecenia.length > 0) {
+      inicjalizowaneZamowieniaRef.current.add(zamowieniePlanowania.id);
+      return;
+    }
+
+    if (inicjalizowaneZamowieniaRef.current.has(zamowieniePlanowania.id)) {
+      return;
+    }
+
+    inicjalizowaneZamowieniaRef.current.add(zamowieniePlanowania.id);
+
+    void (async () => {
+      const utworzono = await utworzOperacjeDlaZamowienia(zamowieniePlanowania);
+      if (utworzono) {
+        await pobierzZamowieniePlanowania();
+        return;
+      }
+
+      inicjalizowaneZamowieniaRef.current.delete(zamowieniePlanowania.id);
+    })();
+  }, [czyWidokPlanowaniaZamowienia, inicjalizacjaPlanowania, zamowieniePlanowania]);
+
+  useEffect(() => {
+    if (czyWidokPlanowaniaZamowienia || ladowanie) {
+      return;
+    }
+
+    if (!Number.isFinite(zlecenieDoOtwarciaParam) || zlecenieDoOtwarciaParam <= 0) {
+      otwarteZParametruRef.current = null;
+      return;
+    }
+
+    if (otwarteZParametruRef.current === zlecenieDoOtwarciaParam) {
+      return;
+    }
+
+    otwarteZParametruRef.current = zlecenieDoOtwarciaParam;
+    void otworzEdycje(zlecenieDoOtwarciaParam);
+  }, [czyWidokPlanowaniaZamowienia, ladowanie, zlecenieDoOtwarciaParam]);
 
   useEffect(() => {
     const obsluzKlik = (event: MouseEvent) => {
@@ -758,16 +1433,22 @@ export default function ZleceniaProdukcyjne() {
       wylaczone: operacjaId === wiersz.id,
     },
     {
-      etykieta: 'Dezaktywuj',
-      ikona: <EyeOff className='h-4 w-4 text-red-500' />,
+      etykieta: wiersz.aktywne ? 'Dezaktywuj' : 'Aktywuj',
+      ikona: wiersz.aktywne ? (
+        <EyeOff className='h-4 w-4 text-red-500' />
+      ) : (
+        <Eye className='h-4 w-4 text-emerald-500' />
+      ),
       akcja: () =>
         void zaktualizujNaPodstawieSzczegolow(
           wiersz.id,
-          () => ({ aktywne: false }),
-          'Nie udalo sie dezaktywowac zlecenia produkcyjnego.'
+          () => ({ aktywne: !wiersz.aktywne }),
+          wiersz.aktywne
+            ? 'Nie udalo sie dezaktywowac zlecenia produkcyjnego.'
+            : 'Nie udalo sie aktywowac zlecenia produkcyjnego.'
         ),
-      niebezpieczna: true,
-      wylaczone: operacjaId === wiersz.id || !wiersz.aktywne,
+      niebezpieczna: wiersz.aktywne,
+      wylaczone: operacjaId === wiersz.id,
     },
     {
       etykieta: 'Zakoncz',
@@ -791,14 +1472,706 @@ export default function ZleceniaProdukcyjne() {
     {
       etykieta: 'Otworz w nowej karcie',
       ikona: <ExternalLink className='h-4 w-4 text-akcent' />,
-      akcja: () =>
-        window.open(
-          `${window.location.origin}${window.location.pathname}?zlecenie=${wiersz.id}`,
-          '_blank',
-          'noopener,noreferrer'
-        ),
+      akcja: () => window.open(`${window.location.origin}/zlecenia-produkcyjne/${wiersz.id}`, '_blank', 'noopener,noreferrer'),
     },
   ];
+
+  if (czyWidokPlanowaniaZamowienia) {
+    const liczbaPozycji =
+      zamowieniePlanowania?.pozycje.reduce((suma, pozycja) => suma + (pozycja.ilosc || 0), 0) ?? 0;
+    const etykietaZamowienia =
+      zamowieniePlanowania?.zewnetrznyNumer || zamowieniePlanowania?.idProdio || `Zamowienie ${zamowienieIdParam}`;
+    const klientEtykieta = zamowieniePlanowania?.klient?.nazwa || 'Brak klienta';
+    const klasaStatusu = pobierzKlaseStatusuPlanowania(zamowieniePlanowania?.status || 'NOWE');
+
+    return (
+      <>
+        <div className='min-h-full overflow-hidden rounded-[28px] border border-obramowanie bg-tlo-karta text-tekst-glowny shadow-xl shadow-black/10'>
+          <section className='border-b border-obramowanie bg-tlo-karta px-6 py-5'>
+            <div className='flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between'>
+              <div className='flex flex-wrap items-center gap-4'>
+                <div className='flex items-center gap-4'>
+                  <h1 className='text-[24px] font-semibold tracking-tight text-tekst-glowny'>Planowanie zamowienia</h1>
+                  <button
+                    type='button'
+                    className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-obramowanie bg-tlo-glowne text-tekst-drugorzedny transition hover:border-akcent hover:text-akcent'
+                    aria-label='Pomoc'
+                  >
+                    <CircleDot className='h-4 w-4' />
+                  </button>
+                </div>
+                <div className='flex flex-wrap items-center gap-2 text-[15px]'>
+                  <span className='inline-flex items-center gap-2 text-akcent'>
+                    <CalendarDays className='h-4 w-4' />
+                    <span className='border-b border-dashed border-akcent/40 font-semibold text-akcent'>
+                      {etykietaZamowienia}
+                    </span>
+                  </span>
+                  <span className='font-medium text-tekst-glowny'>(0/{formatujLiczbe(liczbaPozycji)})</span>
+                </div>
+              </div>
+
+              <div className='flex flex-wrap items-center gap-x-5 gap-y-3 text-sm text-tekst-drugorzedny'>
+                <div className='inline-flex items-center gap-2'>
+                  <UserRound className='h-4 w-4 text-akcent' />
+                  <span>{klientEtykieta}</span>
+                </div>
+                <div className='inline-flex items-center gap-2'>
+                  <FolderOpen className='h-4 w-4 text-akcent' />
+                  <span className='max-w-[190px] truncate'>{zamowieniePlanowania?.pozycje[0]?.produkt?.nazwa || '-'}</span>
+                </div>
+                <div className='inline-flex items-center gap-2'>
+                  <CalendarDays className='h-4 w-4 text-akcent' />
+                  <span>{formatujDatePlanowania(zamowieniePlanowania?.oczekiwanaData ?? null)}</span>
+                </div>
+                <span className={`rounded-md px-3 py-1 text-xs font-semibold uppercase tracking-wide ${klasaStatusu}`}>
+                  {zamowieniePlanowania?.status || 'NOWE'}
+                </span>
+                <button
+                  type='button'
+                  onClick={() => navigate('/zamowienia')}
+                  className='inline-flex h-9 w-9 items-center justify-center rounded-full text-tekst-drugorzedny transition hover:bg-tlo-glowne hover:text-akcent'
+                  aria-label='Zamknij planowanie'
+                >
+                  <X className='h-4 w-4' />
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {bladPlanowania ? (
+            <div className='border-b border-red-500/30 bg-red-500/10 px-6 py-4 text-sm text-red-300'>{bladPlanowania}</div>
+          ) : null}
+
+          <section className='overflow-x-auto bg-tlo-karta'>
+            <table className='min-w-[1960px] w-full border-collapse text-sm'>
+              <thead className='bg-tlo-naglowek text-tekst-drugorzedny'>
+                <tr>
+                  <th className='w-14 border-b border-r border-obramowanie px-3 py-3 text-center font-semibold'>#</th>
+                  <th className='w-12 border-b border-r border-obramowanie px-2 py-3 text-center font-semibold'>
+                    <ArrowUp className='mx-auto h-4 w-4' />
+                  </th>
+                  <th className='min-w-[320px] border-b border-r border-obramowanie px-4 py-3 text-left font-semibold'>Maszyna/Operacja</th>
+                  <th className='min-w-[190px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Planowany start</th>
+                  <th className='min-w-[190px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Planowany stop</th>
+                  <th className='min-w-[180px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Ilosc</th>
+                  <th className='min-w-[120px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Kolejnosc w maszynie</th>
+                  <th className='min-w-[160px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Tagi</th>
+                  <th className='min-w-[170px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Pracownicy</th>
+                  <th className='min-w-[120px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Normatywny czas</th>
+                  <th className='min-w-[170px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Parametry operacji</th>
+                  <th className='min-w-[150px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Uwagi</th>
+                  <th className='min-w-[210px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Poprzednik operacji</th>
+                  <th className='min-w-[190px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Typ operacji</th>
+                  <th className='min-w-[110px] border-b border-r border-obramowanie px-4 py-3 text-center font-semibold'>Maszyna koncowa</th>
+                  <th className='min-w-[110px] border-b border-obramowanie px-4 py-3 text-center font-semibold'>Akcje</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ladowaniePlanowania || inicjalizacjaPlanowania ? (
+                  Array.from({ length: 2 }, (_, indeks) => (
+                    <tr key={`planowanie-skeleton-${indeks}`} className='odd:bg-tlo-karta even:bg-tlo-glowne/30'>
+                      {Array.from({ length: 16 }, (__, kolumna) => (
+                        <td key={kolumna} className='border-b border-r border-obramowanie px-4 py-5 last:border-r-0'>
+                          <div className='h-10 animate-pulse rounded-md bg-obramowanie' />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                ) : !zamowieniePlanowania || zamowieniePlanowania.zlecenia.length === 0 ? (
+                  <tr>
+                    <td colSpan={16} className='px-6 py-16 text-center text-tekst-drugorzedny'>
+                      To zamowienie nie ma jeszcze dodanych operacji do planowania.
+                    </td>
+                  </tr>
+                ) : (
+                  uporzadkowaneZleceniaPlanowania.map((zlecenie, indeks) => (
+                    <tr key={zlecenie.id} className='align-top odd:bg-tlo-karta even:bg-tlo-glowne/30 hover:bg-akcent/5'>
+                      <td className='border-b border-r border-obramowanie px-3 py-3 text-center align-middle text-tekst-glowny'>{indeks + 1}</td>
+                      <td className='border-b border-r border-obramowanie px-2 py-3 align-middle text-center text-akcent'>
+                        <GripVertical className='mx-auto h-4 w-4' />
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <button
+                          type='button'
+                          onClick={() => void otworzEdycje(zlecenie.id)}
+                          className='flex h-[52px] w-full items-center justify-between rounded-[6px] border border-obramowanie bg-tlo-glowne px-3 py-2 text-left transition hover:border-akcent'
+                        >
+                          <div>
+                            <div className='font-semibold text-tekst-glowny'>{zlecenie.maszyna?.nazwa || `Operacja ${indeks + 1}`}</div>
+                            <div className='mt-0.5 text-xs text-tekst-drugorzedny'>{zlecenie.numer}</div>
+                          </div>
+                          <div className='flex items-center gap-2 text-tekst-drugorzedny'>
+                            <CircleDot className='h-3.5 w-3.5' />
+                            <Pencil className='h-3.5 w-3.5' />
+                          </div>
+                        </button>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <KartaWyboruTerminu
+                          etykieta='Start operacji'
+                          wartosc={roboczeTerminyPlanowania[zlecenie.id]?.planowanyStart ?? ''}
+                          onZmiana={(wartosc) =>
+                            ustawRoboczeTerminyPlanowania((poprzednie) => ({
+                              ...poprzednie,
+                              [zlecenie.id]: {
+                                planowanyStart: wartosc,
+                                planowanyStop:
+                                  poprzednie[zlecenie.id]?.planowanyStop ?? naDateTimeLocal(zlecenie.planowanyStop),
+                              },
+                            }))
+                          }
+                          onZapisz={() => void zapiszTerminPlanowania(zlecenie.id, 'planowanyStart')}
+                          disabled={operacjaId === zlecenie.id}
+                          ariaLabelZapisu={`Zapisz planowany start dla ${zlecenie.numer}`}
+                        />
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <KartaWyboruTerminu
+                          etykieta='Stop operacji'
+                          wartosc={roboczeTerminyPlanowania[zlecenie.id]?.planowanyStop ?? ''}
+                          onZmiana={(wartosc) =>
+                            ustawRoboczeTerminyPlanowania((poprzednie) => ({
+                              ...poprzednie,
+                              [zlecenie.id]: {
+                                planowanyStart:
+                                  poprzednie[zlecenie.id]?.planowanyStart ?? naDateTimeLocal(zlecenie.planowanyStart),
+                                planowanyStop: wartosc,
+                              },
+                            }))
+                          }
+                          onZapisz={() => void zapiszTerminPlanowania(zlecenie.id, 'planowanyStop')}
+                          disabled={operacjaId === zlecenie.id}
+                          ariaLabelZapisu={`Zapisz planowany stop dla ${zlecenie.numer}`}
+                        />
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <div className='min-w-[148px] space-y-2 rounded-[10px] border border-obramowanie bg-tlo-glowne p-3'>
+                          <div className='flex h-[48px] items-center rounded-[8px] border border-obramowanie bg-tlo-karta px-3'>
+                            <input
+                              type='number'
+                              min='0'
+                              step='1'
+                              value={roboczeIlosciPlanowania[zlecenie.id] ?? String(zlecenie.iloscPlan)}
+                              onChange={(event) =>
+                                ustawRoboczeIlosciPlanowania((poprzednie) => ({
+                                  ...poprzednie,
+                                  [zlecenie.id]: event.target.value,
+                                }))
+                              }
+                              className='w-full bg-transparent text-base font-semibold text-tekst-glowny outline-none'
+                              aria-label={`Ilosc planowana dla ${zlecenie.numer}`}
+                            />
+                          </div>
+                          <button
+                            type='button'
+                            onClick={() => void zapiszIloscPlanowania(zlecenie.id)}
+                            disabled={operacjaId === zlecenie.id}
+                            className='inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] border border-akcent/30 bg-akcent/10 text-sm font-semibold text-akcent transition hover:bg-akcent/20 disabled:cursor-not-allowed disabled:border-obramowanie disabled:bg-tlo-glowne disabled:text-tekst-drugorzedny'
+                            aria-label={`Zapisz ilosc planowana dla ${zlecenie.numer}`}
+                          >
+                            <Check className='h-4 w-4' />
+                            Zapisz ilosc
+                          </button>
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <div className='space-y-2 rounded-[10px] border border-obramowanie bg-tlo-glowne p-3 text-center'>
+                          <div className='text-xs font-semibold uppercase tracking-[0.16em] text-tekst-drugorzedny'>
+                            Pozycja {indeks + 1}
+                          </div>
+                          <div className='grid grid-cols-2 gap-2'>
+                            <button
+                              type='button'
+                              onClick={() => przesunWiersz(zlecenie.id, 'gora')}
+                              disabled={indeks === 0}
+                              className='inline-flex h-9 items-center justify-center rounded-[8px] border border-obramowanie bg-tlo-karta px-3 text-lg font-bold leading-none text-akcent transition hover:border-akcent hover:bg-akcent/10 disabled:cursor-not-allowed disabled:text-tekst-drugorzedny disabled:hover:border-obramowanie disabled:hover:bg-tlo-karta'
+                              aria-label={`Przesun ${zlecenie.numer} w gore`}
+                            >
+                              <span aria-hidden='true'>↑</span>
+                            </button>
+                            <button
+                              type='button'
+                              onClick={() => przesunWiersz(zlecenie.id, 'dol')}
+                              disabled={indeks === uporzadkowaneZleceniaPlanowania.length - 1}
+                              className='inline-flex h-9 items-center justify-center rounded-[8px] border border-obramowanie bg-tlo-karta px-3 text-lg font-bold leading-none text-akcent transition hover:border-akcent hover:bg-akcent/10 disabled:cursor-not-allowed disabled:text-tekst-drugorzedny disabled:hover:border-obramowanie disabled:hover:bg-tlo-karta'
+                              aria-label={`Przesun ${zlecenie.numer} w dol`}
+                            >
+                              <span aria-hidden='true'>↓</span>
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <div className='flex items-center gap-2'>
+                          <div className='flex min-h-[52px] flex-1 items-center rounded-[6px] border border-obramowanie bg-tlo-glowne px-3 py-2'>
+                            <input
+                              type='text'
+                              value={roboczeTagiPlanowania[zlecenie.id] ?? zlecenie.tagi.join(', ')}
+                              onChange={(event) =>
+                                ustawRoboczeTagiPlanowania((poprzednie) => ({
+                                  ...poprzednie,
+                                  [zlecenie.id]: event.target.value,
+                                }))
+                              }
+                              placeholder='np. pilne, do zrobienia'
+                              className='w-full bg-transparent text-sm text-tekst-glowny outline-none placeholder:text-tekst-drugorzedny'
+                              aria-label={`Tagi dla ${zlecenie.numer}`}
+                            />
+                          </div>
+                          <button
+                            type='button'
+                            onClick={() => void zapiszTagiPlanowania(zlecenie.id)}
+                            disabled={operacjaId === zlecenie.id}
+                            className='inline-flex h-10 w-10 items-center justify-center rounded-[6px] border border-akcent/30 bg-akcent/10 text-akcent transition hover:bg-akcent/20 disabled:cursor-not-allowed disabled:border-obramowanie disabled:bg-tlo-glowne disabled:text-tekst-drugorzedny'
+                            aria-label={`Zapisz tagi dla ${zlecenie.numer}`}
+                          >
+                            <Check className='h-4 w-4' />
+                          </button>
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <div className='space-y-2 rounded-[10px] border border-obramowanie bg-tlo-glowne p-3'>
+                          <div className='flex flex-wrap gap-2'>
+                            {(roboczyPracownicyPlanowania[zlecenie.id] ?? zlecenie.przypisaniPracownicyIds).length > 0 ? (
+                              (roboczyPracownicyPlanowania[zlecenie.id] ?? zlecenie.przypisaniPracownicyIds).map((pracownikId) => {
+                                const pracownik = mapaPracownikow.get(pracownikId);
+
+                                return (
+                                  <span
+                                    key={pracownikId}
+                                    className='inline-flex items-center rounded-full border border-akcent/20 bg-akcent/10 px-2.5 py-1 text-xs font-medium text-tekst-glowny'
+                                  >
+                                    {pobierzNazwePracownika(pracownik, pracownikId)}
+                                  </span>
+                                );
+                              })
+                            ) : (
+                              <span className='text-sm text-tekst-drugorzedny'>Brak przypisanych</span>
+                            )}
+                          </div>
+
+                          <div className='flex items-center gap-2'>
+                            <button
+                              type='button'
+                              onClick={() => {
+                                ustawOtwartePrzypisaniePracownikowId((poprzednie) =>
+                                  poprzednie === zlecenie.id ? null : zlecenie.id
+                                );
+                                ustawSzukajPracownikaPlanowania('');
+                              }}
+                              className='inline-flex h-9 flex-1 items-center justify-between rounded-[8px] border border-obramowanie bg-tlo-karta px-3 text-sm text-tekst-glowny transition hover:border-akcent'
+                            >
+                              <span>
+                                {(roboczyPracownicyPlanowania[zlecenie.id] ?? zlecenie.przypisaniPracownicyIds).length > 0
+                                  ? 'Edytuj przypisanie'
+                                  : 'Dodaj pracownikow'}
+                              </span>
+                              <ArrowDownToLine className='h-3.5 w-3.5 rotate-90 text-tekst-drugorzedny' />
+                            </button>
+                          </div>
+
+                          {otwartePrzypisaniePracownikowId === zlecenie.id ? (
+                            <div className='space-y-2 rounded-[8px] border border-obramowanie bg-tlo-karta p-2'>
+                              <div className='relative'>
+                                <Search className='pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-tekst-drugorzedny' />
+                                <input
+                                  type='text'
+                                  value={szukajPracownikaPlanowania}
+                                  onChange={(event) => ustawSzukajPracownikaPlanowania(event.target.value)}
+                                  placeholder='Szukaj pracownika'
+                                  className='h-9 w-full rounded-[8px] border border-obramowanie bg-tlo-glowne pl-9 pr-3 text-sm text-tekst-glowny outline-none transition focus:border-akcent'
+                                />
+                              </div>
+
+                              <div className='max-h-52 space-y-1 overflow-y-auto pr-1'>
+                                {przefiltrowaniPracownicyPlanowania.map((pracownik) => {
+                                  const wybrani = roboczyPracownicyPlanowania[zlecenie.id] ?? zlecenie.przypisaniPracownicyIds;
+                                  const zaznaczony = wybrani.includes(pracownik.id);
+
+                                  return (
+                                    <button
+                                      key={pracownik.id}
+                                      type='button'
+                                      onClick={() =>
+                                        ustawRoboczyPracownicyPlanowania((poprzednie) => {
+                                          const aktualni = poprzednie[zlecenie.id] ?? zlecenie.przypisaniPracownicyIds;
+                                          const kolejni = aktualni.includes(pracownik.id)
+                                            ? aktualni.filter((id) => id !== pracownik.id)
+                                            : [...aktualni, pracownik.id];
+
+                                          return {
+                                            ...poprzednie,
+                                            [zlecenie.id]: kolejni,
+                                          };
+                                        })
+                                      }
+                                      className={`flex w-full items-center justify-between rounded-[8px] px-3 py-2 text-left text-sm transition ${
+                                        zaznaczony ? 'bg-akcent/10 text-tekst-glowny' : 'text-tekst-glowny hover:bg-tlo-glowne'
+                                      }`}
+                                    >
+                                      <span className='pr-3'>
+                                        {pobierzNazwePracownika(pracownik)}
+                                        {pracownik.stanowisko ? (
+                                          <span className='ml-2 text-xs text-tekst-drugorzedny'>{pracownik.stanowisko}</span>
+                                        ) : null}
+                                      </span>
+                                      <span
+                                        className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${
+                                          zaznaczony ? 'border-akcent bg-akcent text-white' : 'border-obramowanie text-transparent'
+                                        }`}
+                                      >
+                                        <Check className='h-3 w-3' />
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              <div className='flex gap-2'>
+                                <button
+                                  type='button'
+                                  onClick={() => {
+                                    ustawOtwartePrzypisaniePracownikowId(null);
+                                    ustawSzukajPracownikaPlanowania('');
+                                  }}
+                                  className='inline-flex h-9 flex-1 items-center justify-center rounded-[8px] border border-obramowanie bg-tlo-glowne px-3 text-sm font-medium text-tekst-glowny transition hover:border-akcent'
+                                >
+                                  Zamknij
+                                </button>
+                                <button
+                                  type='button'
+                                  onClick={() => void zapiszPracownikowPlanowania(zlecenie.id)}
+                                  disabled={operacjaId === zlecenie.id}
+                                  className='inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-[8px] border border-akcent/30 bg-akcent/10 px-3 text-sm font-semibold text-akcent transition hover:bg-akcent/20 disabled:cursor-not-allowed disabled:border-obramowanie disabled:bg-tlo-glowne disabled:text-tekst-drugorzedny'
+                                >
+                                  <Check className='h-4 w-4' />
+                                  Zapisz
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle text-center'>
+                        <div className='inline-flex items-center gap-2 text-tekst-glowny'>
+                          <span>{formatujNormatywnyCzas(zlecenie.iloscPlan, zlecenie.normaSztGodz)}</span>
+                          <Pencil className='h-3.5 w-3.5 text-akcent' />
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle text-center'>
+                        <div className='space-y-2 rounded-[10px] border border-obramowanie bg-tlo-glowne p-3'>
+                          <textarea
+                            value={roboczeParametryPlanowania[zlecenie.id] ?? zlecenie.parametry ?? ''}
+                            onChange={(event) =>
+                              ustawRoboczeParametryPlanowania((poprzednie) => ({
+                                ...poprzednie,
+                                [zlecenie.id]: event.target.value,
+                              }))
+                            }
+                            rows={3}
+                            placeholder='Wpisz parametry operacji'
+                            className='w-full resize-y rounded-[8px] border border-obramowanie bg-tlo-karta px-3 py-2 text-sm text-tekst-glowny outline-none transition focus:border-akcent placeholder:text-tekst-drugorzedny'
+                            aria-label={`Parametry operacji ${zlecenie.numer}`}
+                          />
+                          <button
+                            type='button'
+                            onClick={() => void zapiszParametryPlanowania(zlecenie.id)}
+                            disabled={operacjaId === zlecenie.id}
+                            className='inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] border border-akcent/30 bg-akcent/10 px-3 text-sm font-semibold text-akcent transition hover:bg-akcent/20 disabled:cursor-not-allowed disabled:border-obramowanie disabled:bg-tlo-glowne disabled:text-tekst-drugorzedny'
+                            aria-label={`Zapisz parametry operacji ${zlecenie.numer}`}
+                          >
+                            <Check className='h-4 w-4' />
+                            Zapisz parametry
+                          </button>
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <button
+                          type='button'
+                          onClick={() => void otworzEdycje(zlecenie.id)}
+                          className='flex min-h-[52px] w-full items-start justify-between rounded-[8px] border border-obramowanie bg-tlo-glowne px-3 py-2 text-left transition hover:border-akcent'
+                          aria-label={`Edytuj uwagi operacji ${zlecenie.numer}`}
+                        >
+                          <span className='line-clamp-3 pr-3 text-sm text-tekst-glowny'>
+                            {zlecenie.uwagi?.trim() ? zlecenie.uwagi : 'Brak uwag'}
+                          </span>
+                          <Pencil className='mt-0.5 h-4 w-4 shrink-0 text-akcent' />
+                        </button>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <div className='flex items-center gap-3'>
+                          <div className='flex h-[52px] flex-1 items-center rounded-[6px] border border-obramowanie bg-tlo-glowne px-3 text-tekst-glowny'>
+                            {zlecenie.numer && indeks > 0 ? uporzadkowaneZleceniaPlanowania[indeks - 1]?.numer || '-' : '-'}
+                          </div>
+                          <button
+                            type='button'
+                            className='text-akcent transition hover:text-akcent-hover'
+                            aria-label={`Otworz poprzednik operacji ${zlecenie.numer}`}
+                          >
+                            <FolderOpen className='h-4 w-4' />
+                          </button>
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle'>
+                        <div className='flex h-[52px] items-center justify-between rounded-[6px] border border-obramowanie bg-tlo-glowne px-3 text-tekst-glowny'>
+                          <span className='font-semibold'>Standardowa operacja</span>
+                          <div className='flex items-center gap-2 text-tekst-drugorzedny'>
+                            <CircleDot className='h-3.5 w-3.5' />
+                            <ArrowDownToLine className='h-3.5 w-3.5 rotate-90' />
+                          </div>
+                        </div>
+                      </td>
+                      <td className='border-b border-r border-obramowanie px-4 py-3 align-middle text-center'>
+                        <button
+                          type='button'
+                          onClick={() =>
+                            void zaktualizujNaPodstawieSzczegolow(
+                              zlecenie.id,
+                              () => ({ maszynaKoncowa: !zlecenie.maszynaKoncowa }),
+                              'Nie udalo sie zmienic oznaczenia maszyny koncowej.'
+                            )
+                          }
+                          className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                            zlecenie.maszynaKoncowa ? 'bg-akcent' : 'bg-obramowanie'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                              zlecenie.maszynaKoncowa ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </td>
+                      <td className='border-b border-obramowanie px-4 py-3 align-middle'>
+                        <MenuAkcji
+                          elementy={elementyMenu({
+                            id: zlecenie.id,
+                            numer: zlecenie.numer,
+                            status: zlecenie.status,
+                            aktywne: true,
+                            iloscPlan: zlecenie.iloscPlan,
+                            iloscWykonana: zlecenie.iloscWykonana,
+                            maszynaKoncowa: zlecenie.maszynaKoncowa,
+                            zamowienieId: zamowieniePlanowania.id,
+                            idProdio: zamowieniePlanowania.idProdio,
+                            zewnetrznyNumer: zamowieniePlanowania.zewnetrznyNumer,
+                            klient: zamowieniePlanowania.klient,
+                            produkt: zamowieniePlanowania.pozycje[0]?.produkt
+                              ? {
+                                  id: zamowieniePlanowania.pozycje[0].produkt!.id,
+                                  nazwa: zamowieniePlanowania.pozycje[0].produkt!.nazwa,
+                                  grupa: null,
+                                  zdjecie: zamowieniePlanowania.pozycje[0].produkt!.zdjecie,
+                                }
+                              : null,
+                            poprzednik:
+                              indeks > 0
+                                ? {
+                                    id: uporzadkowaneZleceniaPlanowania[indeks - 1].id,
+                                    numer: uporzadkowaneZleceniaPlanowania[indeks - 1].numer,
+                                    status: uporzadkowaneZleceniaPlanowania[indeks - 1].status,
+                                    iloscPlan: uporzadkowaneZleceniaPlanowania[indeks - 1].iloscPlan,
+                                    iloscWykonana: uporzadkowaneZleceniaPlanowania[indeks - 1].iloscWykonana,
+                                    procent:
+                                      uporzadkowaneZleceniaPlanowania[indeks - 1].iloscPlan > 0
+                                        ? (uporzadkowaneZleceniaPlanowania[indeks - 1].iloscWykonana /
+                                            uporzadkowaneZleceniaPlanowania[indeks - 1].iloscPlan) *
+                                          100
+                                        : 0,
+                                  }
+                                : null,
+                          })}
+                          otwarte={otwarteMenuId === zlecenie.id}
+                          onToggle={() => ustawOtwarteMenuId((poprzednie) => (poprzednie === zlecenie.id ? null : zlecenie.id))}
+                          onClose={() => ustawOtwarteMenuId(null)}
+                        />
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </section>
+
+          <section className='flex flex-col gap-4 border-t border-obramowanie bg-tlo-karta px-6 py-5 lg:flex-row lg:items-center lg:justify-between'>
+            <div className='max-w-3xl text-sm text-tekst-drugorzedny'>
+              Podpowiedz: jesli chcesz szybciej dodawac zlecenia, przypisz do produktu maszyny, na jakich sa one wytwarzane.
+            </div>
+            <div className='flex flex-wrap items-center gap-3'>
+              <button
+                type='button'
+                onClick={() => navigate(`/zamowienia/${zamowienieIdParam}`)}
+                className='inline-flex h-11 items-center rounded-full border border-obramowanie bg-tlo-glowne px-5 text-sm font-semibold text-tekst-glowny transition hover:border-akcent hover:text-akcent'
+              >
+                Szczegoly zamowienia
+              </button>
+              <button
+                type='button'
+                onClick={() => void pobierzZamowieniePlanowania()}
+                className='inline-flex h-11 items-center rounded-full border border-obramowanie bg-tlo-glowne px-5 text-sm font-semibold text-tekst-glowny transition hover:border-akcent hover:text-akcent'
+              >
+                Aktualizuj technologie
+              </button>
+              <button
+                type='button'
+                onClick={() => navigate('/zamowienia')}
+                className='inline-flex h-11 items-center rounded-full bg-emerald-500 px-6 text-sm font-semibold text-white transition hover:bg-emerald-600'
+              >
+                Zapisz zlecenie/a
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <Modal
+          czyOtwarty={czyModalEdycji}
+          onZamknij={() => {
+            if (zapisywanie) {
+              return;
+            }
+
+            zamknijModalEdycji();
+            ustawSzczegoly(null);
+            ustawBladFormularza('');
+            ustawFormularz(domyslnyFormularzEdycji());
+          }}
+          tytul={edytowaneId ? `Edytuj zlecenie ${edytowaneId}` : 'Edytuj zlecenie'}
+          rozmiar='duzy'
+          akcje={
+            <>
+              <Przycisk
+                type='button'
+                wariant='drugorzedny'
+                onClick={zamknijModalEdycji}
+                disabled={zapisywanie}
+              >
+                Zamknij
+              </Przycisk>
+              <Przycisk type='submit' form='formularz-edycji-zlecenia' czyLaduje={zapisywanie}>
+                Zapisz zmiany
+              </Przycisk>
+            </>
+          }
+        >
+          {ladowanieSzczegolow ? (
+            <div className='py-12 text-center text-sm text-tekst-drugorzedny'>Ladowanie szczegolow...</div>
+          ) : (
+            <form id='formularz-edycji-zlecenia' onSubmit={zapiszZmiany} className='space-y-5'>
+              <div className='grid gap-4 md:grid-cols-2'>
+                <Rozwijane
+                  etykieta='Maszyna'
+                  opcje={opcjeMaszyn}
+                  wartosc={formularz.maszynaId}
+                  onZmiana={(wartosc) => ustawFormularz((poprzedni) => ({ ...poprzedni, maszynaId: String(wartosc) }))}
+                  placeholder='Wybierz maszyne'
+                />
+                <Rozwijane
+                  etykieta='Status'
+                  opcje={opcjeStatusow}
+                  wartosc={formularz.status}
+                  onZmiana={(wartosc) =>
+                    ustawFormularz((poprzedni) => ({ ...poprzedni, status: wartosc as StatusZlecenia }))
+                  }
+                />
+                <Pole
+                  etykieta='Ilosc plan'
+                  type='number'
+                  min='0'
+                  value={formularz.iloscPlan}
+                  onChange={(event) => ustawFormularz((poprzedni) => ({ ...poprzedni, iloscPlan: event.target.value }))}
+                />
+                <Pole
+                  etykieta='Ilosc wykonana'
+                  type='number'
+                  min='0'
+                  value={formularz.iloscWykonana}
+                  onChange={(event) =>
+                    ustawFormularz((poprzedni) => ({ ...poprzedni, iloscWykonana: event.target.value }))
+                  }
+                />
+                <Pole
+                  etykieta='Ilosc brakow'
+                  type='number'
+                  min='0'
+                  value={formularz.iloscBrakow}
+                  onChange={(event) => ustawFormularz((poprzedni) => ({ ...poprzedni, iloscBrakow: event.target.value }))}
+                />
+                <Rozwijane
+                  etykieta='Poprzednik'
+                  opcje={(szczegoly?.kandydaciPoprzednika ?? []).map((kandydat) => ({
+                    wartosc: String(kandydat.id),
+                    etykieta: `${kandydat.numer} (${formatujLiczbe(kandydat.iloscWykonana)}/${formatujLiczbe(kandydat.iloscPlan)})`,
+                  }))}
+                  wartosc={formularz.poprzednikId}
+                  onZmiana={(wartosc) => ustawFormularz((poprzedni) => ({ ...poprzedni, poprzednikId: String(wartosc) }))}
+                  placeholder='Bez poprzednika'
+                />
+                <PoleDatyZPotwierdzeniem
+                  etykieta='Planowany start'
+                  roboczaWartosc={roboczyPlanowanyStart}
+                  zatwierdzonaWartosc={formularz.planowanyStart}
+                  onZmianaRobocza={ustawRoboczyPlanowanyStart}
+                  onZatwierdz={() =>
+                    ustawFormularz((poprzedni) => ({ ...poprzedni, planowanyStart: roboczyPlanowanyStart }))
+                  }
+                />
+                <PoleDatyZPotwierdzeniem
+                  etykieta='Planowany stop'
+                  roboczaWartosc={roboczyPlanowanyStop}
+                  zatwierdzonaWartosc={formularz.planowanyStop}
+                  onZmianaRobocza={ustawRoboczyPlanowanyStop}
+                  onZatwierdz={() =>
+                    ustawFormularz((poprzedni) => ({ ...poprzedni, planowanyStop: roboczyPlanowanyStop }))
+                  }
+                />
+                <Pole
+                  etykieta='Norma szt./godz.'
+                  value={formularz.normaSztGodz}
+                  onChange={(event) => ustawFormularz((poprzedni) => ({ ...poprzedni, normaSztGodz: event.target.value }))}
+                />
+                <Pole
+                  etykieta='Tagi (po przecinku)'
+                  value={formularz.tagi}
+                  onChange={(event) => ustawFormularz((poprzedni) => ({ ...poprzedni, tagi: event.target.value }))}
+                />
+                <Pole
+                  etykieta='Parametry operacji'
+                  value={formularz.parametry}
+                  onChange={(event) => ustawFormularz((poprzedni) => ({ ...poprzedni, parametry: event.target.value }))}
+                />
+              </div>
+
+              <div className='grid gap-4 md:grid-cols-2'>
+                <Przelacznik
+                  wartosc={formularz.aktywne}
+                  onZmiana={(wartosc) => ustawFormularz((poprzedni) => ({ ...poprzedni, aktywne: wartosc }))}
+                  etykieta='Aktywne'
+                />
+                <Przelacznik
+                  wartosc={formularz.maszynaKoncowa}
+                  onZmiana={(wartosc) => ustawFormularz((poprzedni) => ({ ...poprzedni, maszynaKoncowa: wartosc }))}
+                  etykieta='Maszyna koncowa'
+                />
+              </div>
+
+              <Pole
+                etykieta='Uwagi'
+                value={formularz.uwagi}
+                onChange={(event) => ustawFormularz((poprzedni) => ({ ...poprzedni, uwagi: event.target.value }))}
+              />
+
+              {bladFormularza ? (
+                <div className='rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600'>
+                  {bladFormularza}
+                </div>
+              ) : null}
+            </form>
+          )}
+        </Modal>
+      </>
+    );
+  }
 
   return (
     <div className='space-y-6'>
@@ -1019,7 +2392,7 @@ export default function ZleceniaProdukcyjne() {
                     <td className='border-b border-r border-obramowanie px-4 py-4 align-middle'>
                       <button
                         type='button'
-                        onClick={() => void otworzEdycje(wiersz.id)}
+                        onClick={() => navigate(`/zlecenia-produkcyjne/${wiersz.id}`)}
                         className='border-b border-dashed border-akcent font-medium text-akcent hover:text-akcent-hover'
                       >
                         {wiersz.numer}
@@ -1035,16 +2408,51 @@ export default function ZleceniaProdukcyjne() {
                       )}
                     </td>
                     <td className='border-b border-r border-obramowanie px-4 py-4 align-middle text-akcent'>
-                      <span className='border-b border-dashed border-akcent'>{wiersz.idProdio}</span>
+                      <button
+                        type='button'
+                        onClick={() => navigate(`/zamowienia/${wiersz.zamowienieId}`)}
+                        className='border-b border-dashed border-akcent transition hover:text-akcent-hover'
+                      >
+                        {wiersz.idProdio}
+                      </button>
                     </td>
                     <td className='border-b border-r border-obramowanie px-4 py-4 align-middle text-akcent'>
-                      <span className='border-b border-dashed border-akcent'>{wiersz.zewnetrznyNumer || '-'}</span>
+                      {wiersz.zewnetrznyNumer ? (
+                        <button
+                          type='button'
+                          onClick={() => {
+                            const numerZewnetrzny = wiersz.zewnetrznyNumer ?? '';
+
+                            if (numerZewnetrzny.toUpperCase().startsWith('ZK/')) {
+                              navigate(`/zamowienia/zgrupowane?numer=${encodeURIComponent(numerZewnetrzny)}`);
+                              return;
+                            }
+
+                            navigate(`/zamowienia/${wiersz.zamowienieId}`);
+                          }}
+                          className='border-b border-dashed border-akcent transition hover:text-akcent-hover'
+                        >
+                          {wiersz.zewnetrznyNumer}
+                        </button>
+                      ) : (
+                        <span>-</span>
+                      )}
                     </td>
                     <td className='border-b border-r border-obramowanie px-0 py-4 align-middle'>
                       <PasekPoprzednika poprzednik={wiersz.poprzednik} />
                     </td>
                     <td className='border-b border-r border-obramowanie px-4 py-4 align-middle text-akcent'>
-                      <span className='border-b border-dashed border-akcent'>{wiersz.klient?.nazwa || '-'}</span>
+                      {wiersz.klient ? (
+                        <button
+                          type='button'
+                          onClick={() => navigate(`/klienci?klientId=${wiersz.klient!.id}`)}
+                          className='border-b border-dashed border-akcent transition hover:text-akcent-hover'
+                        >
+                          {wiersz.klient.nazwa}
+                        </button>
+                      ) : (
+                        <span>-</span>
+                      )}
                     </td>
                     <td className='border-b border-r border-obramowanie px-4 py-4 align-middle'>
                       <div className='max-w-[420px]'>{wiersz.produkt?.nazwa || '-'}</div>
@@ -1342,7 +2750,7 @@ export default function ZleceniaProdukcyjne() {
             return;
           }
 
-          ustawCzyModalEdycji(false);
+          zamknijModalEdycji();
           ustawSzczegoly(null);
           ustawBladFormularza('');
           ustawFormularz(domyslnyFormularzEdycji());
@@ -1354,7 +2762,7 @@ export default function ZleceniaProdukcyjne() {
             <Przycisk
               type='button'
               wariant='drugorzedny'
-              onClick={() => ustawCzyModalEdycji(false)}
+              onClick={zamknijModalEdycji}
               disabled={zapisywanie}
             >
               Zamknij
@@ -1442,20 +2850,22 @@ export default function ZleceniaProdukcyjne() {
                   etykieta='Operacja koncowa'
                 />
               </div>
-              <Pole
+              <PoleDatyZPotwierdzeniem
                 etykieta='Planowany start'
-                type='datetime-local'
-                value={formularz.planowanyStart}
-                onChange={(event) =>
-                  ustawFormularz((poprzedni) => ({ ...poprzedni, planowanyStart: event.target.value }))
+                roboczaWartosc={roboczyPlanowanyStart}
+                zatwierdzonaWartosc={formularz.planowanyStart}
+                onZmianaRobocza={ustawRoboczyPlanowanyStart}
+                onZatwierdz={() =>
+                  ustawFormularz((poprzedni) => ({ ...poprzedni, planowanyStart: roboczyPlanowanyStart }))
                 }
               />
-              <Pole
+              <PoleDatyZPotwierdzeniem
                 etykieta='Planowany stop'
-                type='datetime-local'
-                value={formularz.planowanyStop}
-                onChange={(event) =>
-                  ustawFormularz((poprzedni) => ({ ...poprzedni, planowanyStop: event.target.value }))
+                roboczaWartosc={roboczyPlanowanyStop}
+                zatwierdzonaWartosc={formularz.planowanyStop}
+                onZmianaRobocza={ustawRoboczyPlanowanyStop}
+                onZatwierdz={() =>
+                  ustawFormularz((poprzedni) => ({ ...poprzedni, planowanyStop: roboczyPlanowanyStop }))
                 }
               />
             </div>

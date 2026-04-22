@@ -217,7 +217,6 @@ export default function Produkty() {
 
   const kolumny = useMemo<KolumnaTabeliDanych<Produkt>[]>(
     () => [
-      { klucz: 'id', naglowek: 'ID', sortowalny: true, szerokosc: '80px' },
       { klucz: 'idProdio', naglowek: 'ID Prodio', sortowalny: true, szerokosc: '130px' },
       {
         klucz: 'zdjecie',

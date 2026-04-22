@@ -3,6 +3,22 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+async function wygenerujUnikalneIdProdio(): Promise<string> {
+  for (let proba = 0; proba < 20; proba += 1) {
+    const kandydat = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+    const istniejacy = await prisma.produkt.findUnique({
+      where: { idProdio: kandydat },
+      select: { id: true },
+    });
+
+    if (!istniejacy) {
+      return kandydat;
+    }
+  }
+
+  throw new Error('Nie udalo sie wygenerowac unikalnego ID Prodio');
+}
+
 export async function pobierzGrupyProduktow(_req: Request, res: Response): Promise<void> {
   try {
     const dane = await prisma.grupaProduktow.findMany({ orderBy: { nazwa: 'asc' } });
@@ -72,7 +88,6 @@ export async function pobierzProdukt(req: Request, res: Response): Promise<void>
 export async function utworzProdukt(req: Request, res: Response): Promise<void> {
   try {
     const {
-      idProdio,
       nazwa,
       ean,
       dodatkoweOznaczenia,
@@ -89,10 +104,12 @@ export async function utworzProdukt(req: Request, res: Response): Promise<void> 
       klientId,
     } = req.body;
 
-    if (!idProdio || !nazwa) {
-      res.status(400).json({ sukces: false, wiadomosc: 'idProdio i nazwa sa wymagane' });
+    if (!nazwa) {
+      res.status(400).json({ sukces: false, wiadomosc: 'nazwa jest wymagana' });
       return;
     }
+
+    const idProdio = await wygenerujUnikalneIdProdio();
 
     const produkt = await prisma.produkt.create({
       data: {
@@ -123,7 +140,6 @@ export async function utworzProdukt(req: Request, res: Response): Promise<void> 
 export async function zaktualizujProdukt(req: Request, res: Response): Promise<void> {
   try {
     const {
-      idProdio,
       nazwa,
       ean,
       dodatkoweOznaczenia,
@@ -140,15 +156,14 @@ export async function zaktualizujProdukt(req: Request, res: Response): Promise<v
       klientId,
     } = req.body;
 
-    if (!idProdio || !nazwa) {
-      res.status(400).json({ sukces: false, wiadomosc: 'idProdio i nazwa sa wymagane' });
+    if (!nazwa) {
+      res.status(400).json({ sukces: false, wiadomosc: 'nazwa jest wymagana' });
       return;
     }
 
     const produkt = await prisma.produkt.update({
       where: { id: parseInt(req.params.id) },
       data: {
-        idProdio,
         nazwa,
         ean,
         dodatkoweOznaczenia,

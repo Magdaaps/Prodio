@@ -6,6 +6,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Ban,
   CalendarDays,
@@ -320,7 +322,7 @@ const klasyPolaWTabeli =
 const klasyTextareaModala =
   'w-full rounded-2xl border border-obramowanie bg-tlo-glowne px-4 py-3 text-sm text-tekst-glowny transition-colors focus:border-akcent focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed';
 
-function MenuAkcji({
+function MenuAkcjiPortal({
   elementy,
   otwarte,
   onToggle,
@@ -332,6 +334,127 @@ function MenuAkcji({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const portalRef = useRef<HTMLDivElement | null>(null);
+  const przyciskRef = useRef<HTMLButtonElement | null>(null);
+  const [pozycjaMenu, ustawPozycjeMenu] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+
+  useEffect(() => {
+    if (!otwarte) {
+      return;
+    }
+
+    const obsluzKlik = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const klikWPrzycisku = ref.current?.contains(target);
+      const klikWPortalu = portalRef.current?.contains(target);
+
+      if (!klikWPrzycisku && !klikWPortalu) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('mousedown', obsluzKlik);
+
+    return () => {
+      document.removeEventListener('mousedown', obsluzKlik);
+    };
+  }, [otwarte, onClose]);
+
+  useEffect(() => {
+    if (!otwarte || !przyciskRef.current) {
+      return;
+    }
+
+    const obliczPozycje = () => {
+      if (!przyciskRef.current) {
+        return;
+      }
+
+      const rect = przyciskRef.current.getBoundingClientRect();
+      const szerokoscMenu = 224;
+      const odstep = 8;
+      const margines = 12;
+      const top = rect.bottom + odstep;
+      const maxHeight = Math.max(180, window.innerHeight - top - margines);
+
+      const left = Math.min(
+        window.innerWidth - szerokoscMenu - margines,
+        Math.max(margines, rect.right - szerokoscMenu)
+      );
+
+      ustawPozycjeMenu({ top, left, maxHeight });
+    };
+
+    obliczPozycje();
+    window.addEventListener('resize', obliczPozycje);
+    window.addEventListener('scroll', obliczPozycje, true);
+
+    return () => {
+      window.removeEventListener('resize', obliczPozycje);
+      window.removeEventListener('scroll', obliczPozycje, true);
+    };
+  }, [elementy.length, otwarte]);
+
+  return (
+    <div ref={ref} className='relative flex justify-center'>
+      <button
+        ref={przyciskRef}
+        type='button'
+        onClick={onToggle}
+        className='flex h-10 w-10 items-center justify-center rounded-full border border-obramowanie bg-tlo-glowne text-akcent transition hover:border-akcent hover:bg-akcent/10'
+      >
+        <MoreHorizontal className='h-5 w-5' />
+      </button>
+
+      {otwarte && pozycjaMenu
+        ? createPortal(
+            <div
+              ref={portalRef}
+              className='fixed z-[9999] w-56 overflow-y-auto overflow-x-hidden rounded-lg border border-obramowanie bg-tlo-karta shadow-xl'
+              style={{ top: pozycjaMenu.top, left: pozycjaMenu.left, maxHeight: `${pozycjaMenu.maxHeight}px` }}
+            >
+              {elementy.map((element) => (
+                <button
+                  key={element.etykieta}
+                  type='button'
+                  disabled={element.wylaczone}
+                  onClick={() => {
+                    element.akcja?.();
+                    onClose();
+                  }}
+                  className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition ${
+                    element.wylaczone
+                      ? 'cursor-not-allowed text-tekst-drugorzedny/50'
+                      : element.niebezpieczna
+                        ? 'text-red-300 hover:bg-red-500/10'
+                        : 'text-tekst-glowny hover:bg-tlo-glowne'
+                  }`}
+                >
+                  <span className='shrink-0'>{element.ikona}</span>
+                  <span>{element.etykieta}</span>
+                </button>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+}
+
+export function MenuAkcji({
+  elementy,
+  otwarte,
+  onToggle,
+  onClose,
+}: {
+  elementy: ElementMenuAkcji[];
+  otwarte: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [otwierajDoGory, ustawOtwierajDoGory] = useState(false);
 
   useEffect(() => {
     if (!otwarte) {
@@ -351,6 +474,22 @@ function MenuAkcji({
     };
   }, [otwarte, onClose]);
 
+  useEffect(() => {
+    if (!otwarte || !ref.current) {
+      return;
+    }
+
+    const wysokoscMenu = Math.min(elementy.length * 48 + 8, 420);
+    const odstęp = 12;
+    const pozycja = ref.current.getBoundingClientRect();
+    const dostepneMiejscePod = window.innerHeight - pozycja.bottom;
+    const dostepneMiejsceNad = pozycja.top;
+
+    ustawOtwierajDoGory(
+      dostepneMiejscePod < wysokoscMenu + odstęp && dostepneMiejsceNad > dostepneMiejscePod
+    );
+  }, [elementy.length, otwarte]);
+
   return (
     <div ref={ref} className='relative flex justify-center'>
       <button
@@ -362,7 +501,11 @@ function MenuAkcji({
       </button>
 
       {otwarte ? (
-        <div className='absolute right-0 top-12 z-20 w-56 overflow-hidden rounded-lg border border-obramowanie bg-tlo-karta shadow-xl'>
+        <div
+          className={`absolute right-0 z-20 w-56 overflow-hidden rounded-lg border border-obramowanie bg-tlo-karta shadow-xl ${
+            otwierajDoGory ? 'bottom-12' : 'top-12'
+          }`}
+        >
           {elementy.map((element) => (
             <button
               key={element.etykieta}
@@ -391,6 +534,7 @@ function MenuAkcji({
 }
 
 export default function Zamowienia() {
+  const navigate = useNavigate();
   const {
     strona,
     iloscNaStrone,
@@ -419,6 +563,7 @@ export default function Zamowienia() {
   const [usuwaneId, ustawUsuwaneId] = useState<number | null>(null);
   const [pokazImporter, ustawPokazImporter] = useState(false);
   const [otwarteMenuId, ustawOtwarteMenuId] = useState<number | null>(null);
+  const [podgladObrazu, ustawPodgladObrazu] = useState<{ src: string; alt: string } | null>(null);
 
   const liczbaStron = Math.max(1, Math.ceil(lacznie / iloscNaStrone));
   const produktyMap = useMemo(
@@ -591,6 +736,10 @@ export default function Zamowienia() {
     ustawBladFormularza('');
   };
 
+  const zamknijPodgladObrazu = () => {
+    ustawPodgladObrazu(null);
+  };
+
   const ustawPoleFormularza = <K extends keyof FormularzZamowienia>(
     pole: K,
     wartosc: FormularzZamowienia[K]
@@ -667,6 +816,22 @@ export default function Zamowienia() {
     }
   };
 
+  const zaplanujZamowienie = async (zamowienie: Zamowienie) => {
+    navigate(`/zlecenia-produkcyjne?zamowienieId=${zamowienie.id}`);
+
+    try {
+      await klientApi.put(`/zamowienia/${zamowienie.id}`, {
+        zewnetrznyNumer: zamowienie.zewnetrznyNumer ?? undefined,
+        klientId: zamowienie.klientId ? String(zamowienie.klientId) : undefined,
+        status: 'OCZEKUJE',
+        oczekiwanaData: naDateInput(zamowienie.oczekiwanaData),
+        uwagi: zamowienie.uwagi ?? undefined,
+      });
+    } catch {
+      console.error('Nie udalo sie ustawic statusu OCZEKUJE przed planowaniem zamowienia.');
+    }
+  };
+
   const zapiszZamowienie = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -674,11 +839,6 @@ export default function Zamowienia() {
 
     if (trybModalu === 'podglad') {
       zamknijModal();
-      return;
-    }
-
-    if (!formularz.idProdio.trim()) {
-      ustawBladFormularza('Pole ID Prodio jest wymagane.');
       return;
     }
 
@@ -699,7 +859,7 @@ export default function Zamowienia() {
     ustawBladFormularza('');
 
     const payload = {
-      idProdio: formularz.idProdio.trim(),
+      idProdio: formularz.idProdio.trim() || undefined,
       zewnetrznyNumer: formularz.zewnetrznyNumer.trim() || undefined,
       klientId: formularz.produkcjaNaMagazyn ? undefined : formularz.klientId || undefined,
       status: formularz.status,
@@ -932,25 +1092,25 @@ export default function Zamowienia() {
           </div>
         ) : null}
 
-        <div className='overflow-hidden rounded-2xl border border-obramowanie bg-tlo-glowne shadow-inner'>
-          <div className='overflow-x-auto'>
+        <div className='rounded-2xl border border-obramowanie bg-tlo-glowne shadow-inner'>
+          <div className='overflow-x-auto overflow-y-visible'>
             <table className='min-w-[1280px] w-full border-collapse text-sm text-tekst-glowny'>
               <thead>
                 <tr className='bg-tlo-naglowek text-tekst-drugorzedny'>
                   <th className='w-12 border border-obramowanie px-3 py-4 text-center'>
                     <input type='checkbox' className='h-5 w-5 rounded border-obramowanie bg-tlo-glowne' />
                   </th>
-                  <th className='border border-obramowanie px-4 py-4 text-left font-semibold'>Status</th>
+                  <th className='w-[120px] border border-obramowanie px-4 py-4 text-left font-semibold'>Status</th>
                   <th
-                    className='border border-obramowanie px-4 py-4 text-left font-semibold cursor-pointer hover:text-akcent'
+                    className='w-[150px] border border-obramowanie px-4 py-4 text-left font-semibold cursor-pointer hover:text-akcent'
                     onClick={() => onSortowanie('idProdio', kluczSortowania === 'idProdio' && kierunekSortowania === 'asc' ? 'desc' : 'asc')}
                   >
                     ID Prodio
                   </th>
                   <th className='border border-obramowanie px-4 py-4 text-left font-semibold'>Obraz</th>
-                  <th className='border border-obramowanie px-4 py-4 text-left font-semibold'>Produkt</th>
+                  <th className='w-[320px] border border-obramowanie px-4 py-4 text-left font-semibold'>Produkt</th>
                   <th
-                    className='border border-obramowanie px-4 py-4 text-left font-semibold cursor-pointer hover:text-akcent'
+                    className='w-[170px] border border-obramowanie px-4 py-4 text-left font-semibold cursor-pointer hover:text-akcent'
                     onClick={() => onSortowanie('zewnetrznyNumer', kluczSortowania === 'zewnetrznyNumer' && kierunekSortowania === 'asc' ? 'desc' : 'asc')}
                   >
                     Zew. nr zamowienia
@@ -962,12 +1122,14 @@ export default function Zamowienia() {
                   >
                     Oczekiwany termin realizacji
                   </th>
-                  <th className='border border-obramowanie px-4 py-4 text-left font-semibold'>Klient</th>
-                  <th className='border border-obramowanie px-4 py-4 text-center font-semibold'>Akcje</th>
+                  <th className='w-[210px] border border-obramowanie px-4 py-4 text-left font-semibold'>Klient</th>
+                  <th className='sticky right-0 z-30 w-24 border border-obramowanie bg-tlo-naglowek px-4 py-4 text-center font-semibold shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.55)]'>
+                    Akcje
+                  </th>
                 </tr>
                 <tr className='bg-tlo-karta'>
-                  <th className='border border-obramowanie px-3 py-2.5' />
-                  <th className='border border-obramowanie px-3 py-2.5'>
+                  <th className='sticky right-0 z-20 w-24 border border-obramowanie bg-tlo-karta px-3 py-2.5 shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.55)]' />
+                  <th className='w-[120px] border border-obramowanie px-3 py-2.5'>
                     <select
                       value={statusFiltra}
                       onChange={(event) => {
@@ -984,7 +1146,7 @@ export default function Zamowienia() {
                       ))}
                     </select>
                   </th>
-                  <th className='border border-obramowanie px-3 py-2.5'>
+                  <th className='w-[150px] border border-obramowanie px-3 py-2.5'>
                     <input
                       value={szukaj}
                       onChange={(event) => {
@@ -996,7 +1158,7 @@ export default function Zamowienia() {
                     />
                   </th>
                   <th className='border border-obramowanie px-3 py-2.5' />
-                  <th className='border border-obramowanie px-3 py-2.5'>
+                  <th className='w-[320px] border border-obramowanie px-3 py-2.5'>
                     <input
                       placeholder='Produkt'
                       className='h-9 w-full rounded-md border border-obramowanie bg-tlo-glowne px-3 text-sm text-tekst-glowny'
@@ -1022,7 +1184,7 @@ export default function Zamowienia() {
                       disabled
                     />
                   </th>
-                  <th className='border border-obramowanie px-3 py-2.5'>
+                  <th className='w-[210px] border border-obramowanie px-3 py-2.5'>
                     <select
                       className='h-9 w-full rounded-md border border-obramowanie bg-tlo-glowne px-3 text-sm text-tekst-glowny'
                       disabled
@@ -1090,7 +1252,7 @@ export default function Zamowienia() {
                       {
                         etykieta: 'Zaplanuj',
                         ikona: <CalendarDays className='h-4 w-4 text-akcent' />,
-                        akcja: () => void zaktualizujStatus(zamowienie, 'OCZEKUJE'),
+                        akcja: () => void zaplanujZamowienie(zamowienie),
                       },
                       {
                         etykieta: 'Drukuj',
@@ -1119,7 +1281,7 @@ export default function Zamowienia() {
                         <td className='border border-obramowanie px-4 py-3 align-middle text-akcent'>
                           <button
                             type='button'
-                            onClick={() => otworzPodgladLubEdycje(zamowienie, 'podglad')}
+                            onClick={() => navigate(`/zamowienia/${zamowienie.id}`)}
                             className='border-b border-dashed border-akcent transition hover:text-akcent-hover'
                           >
                             {zamowienie.idProdio}
@@ -1127,11 +1289,23 @@ export default function Zamowienia() {
                         </td>
                         <td className='border border-obramowanie px-4 py-3 align-middle'>
                           {produkt?.zdjecie ? (
-                            <img
-                              src={produkt.zdjecie}
-                              alt={produkt.nazwa}
-                              className='h-12 w-12 object-contain'
-                            />
+                            <button
+                              type='button'
+                              onClick={() =>
+                                ustawPodgladObrazu({
+                                  src: produkt.zdjecie!,
+                                  alt: produkt.nazwa,
+                                })
+                              }
+                              className='rounded-lg border border-transparent transition hover:border-akcent hover:bg-akcent/5'
+                              title='Powieksz obraz'
+                            >
+                              <img
+                                src={produkt.zdjecie}
+                                alt={produkt.nazwa}
+                                className='h-12 w-12 object-contain'
+                              />
+                            </button>
                           ) : (
                             <div className='flex h-12 w-12 items-center justify-center rounded bg-tlo-karta text-tekst-drugorzedny'>
                               <PackagePlus className='h-5 w-5' />
@@ -1142,9 +1316,28 @@ export default function Zamowienia() {
                           <div className='max-w-[440px] text-sm'>{produkt?.nazwa || '-'}</div>
                         </td>
                         <td className='border border-obramowanie px-4 py-3 align-middle text-akcent'>
-                          <span className='border-b border-dashed border-akcent'>
-                            {zamowienie.zewnetrznyNumer || '-'}
-                          </span>
+                          {zamowienie.zewnetrznyNumer ? (
+                            <button
+                              type='button'
+                              onClick={() => {
+                                const numerZewnetrzny = zamowienie.zewnetrznyNumer ?? '';
+
+                                if (numerZewnetrzny.toUpperCase().startsWith('ZK/')) {
+                                  navigate(
+                                    `/zamowienia/zgrupowane?numer=${encodeURIComponent(numerZewnetrzny)}`
+                                  );
+                                  return;
+                                }
+
+                                navigate(`/zamowienia/${zamowienie.id}`);
+                              }}
+                              className='border-b border-dashed border-akcent transition hover:text-akcent-hover'
+                            >
+                              {zamowienie.zewnetrznyNumer}
+                            </button>
+                          ) : (
+                            <span>-</span>
+                          )}
                         </td>
                         <td
                           className={`border border-obramowanie px-4 py-3 text-center align-middle text-lg font-semibold ${
@@ -1159,12 +1352,20 @@ export default function Zamowienia() {
                           {formatujDate(zamowienie.oczekiwanaData)}
                         </td>
                         <td className='border border-obramowanie px-4 py-3 align-middle text-akcent'>
-                          <span className='border-b border-dashed border-akcent'>
-                            {zamowienie.klient?.nazwa || '-'}
-                          </span>
+                          {zamowienie.klient ? (
+                            <button
+                              type='button'
+                              onClick={() => navigate(`/klienci?klientId=${zamowienie.klient!.id}`)}
+                              className='border-b border-dashed border-akcent transition hover:text-akcent-hover'
+                            >
+                              {zamowienie.klient.nazwa}
+                            </button>
+                          ) : (
+                            <span>-</span>
+                          )}
                         </td>
-                        <td className='border border-obramowanie px-4 py-3 align-middle'>
-                          <MenuAkcji
+                        <td className='sticky right-0 z-10 w-24 border border-obramowanie bg-tlo-glowne px-4 py-3 align-middle overflow-visible shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.55)]'>
+                          <MenuAkcjiPortal
                             elementy={menuAkcji.map((element) => ({
                               ...element,
                               wylaczone:
@@ -1219,6 +1420,33 @@ export default function Zamowienia() {
           </div>
         </div>
       </section>
+
+      {podgladObrazu ? (
+        <div
+          className='fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm'
+          onClick={zamknijPodgladObrazu}
+        >
+          <div
+            className='relative flex max-h-[90vh] w-full max-w-5xl items-center justify-center rounded-3xl border border-obramowanie bg-tlo-karta p-4 shadow-2xl'
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type='button'
+              onClick={zamknijPodgladObrazu}
+              className='absolute right-4 top-4 rounded-full border border-obramowanie bg-tlo-glowne p-2 text-tekst-drugorzedny transition hover:border-akcent hover:text-tekst-glowny'
+              aria-label='Zamknij podglad obrazu'
+            >
+              <X className='h-5 w-5' />
+            </button>
+
+            <img
+              src={podgladObrazu.src}
+              alt={podgladObrazu.alt}
+              className='max-h-[82vh] w-auto max-w-full rounded-2xl object-contain'
+            />
+          </div>
+        </div>
+      ) : null}
 
       {czyModalOtwarty ? (
         <div className='fixed inset-0 z-50 overflow-y-auto bg-black/45 p-3 backdrop-blur-[2px] md:p-4'>

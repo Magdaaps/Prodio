@@ -25,6 +25,25 @@ export type SurowiecDto = {
   aktywny: boolean;
 };
 
+type SurowiecSzczegolyDto = SurowiecDto & {
+  vat: number;
+  surowceDostawcy: Array<{
+    id: number;
+    cenaZakupu: number | string;
+    waluta: string;
+    dostawca: {
+      id: number;
+      nazwa: string;
+      miasto?: string | null;
+      kraj?: string | null;
+      email?: string | null;
+      telefon?: string | null;
+      osobaKontaktowa?: string | null;
+      aktywny: boolean;
+    };
+  }>;
+};
+
 export type ZlecenieDto = {
   id: number;
   numer: string;
@@ -43,6 +62,14 @@ export type StanMagazynowyDto = {
   sredniaCena: number;
   wartoscZapasow: number;
   aktywny: boolean;
+};
+
+type TypOperacjiMagazynowej = 'PRZYJECIE' | 'WYDANIE' | 'KOREKTA' | 'PRZENIESIENIE';
+
+type ModalOperacjiMagazynowej = {
+  typ: TypOperacjiMagazynowej;
+  rekord: StanMagazynowyDto | null;
+  powrotDoSzczegolow: boolean;
 };
 
 export type OdpowiedzApi<T> = {
@@ -162,6 +189,10 @@ export function formatujLiczbe(value: number, digits = 2) {
   }).format(value);
 }
 
+function formatujWalute(value: number, waluta = 'PLN') {
+  return `${formatujLiczbe(value)} ${waluta}`;
+}
+
 export function useMagazynSlowniki() {
   const [magazyny, ustawMagazyny] = useState<MagazynDto[]>([]);
   const [surowce, ustawSurowce] = useState<SurowiecDto[]>([]);
@@ -203,6 +234,225 @@ export function useMagazynSlowniki() {
 
 function NaglowekFormularza({ children }: { children: ReactNode }) {
   return <div className='rounded-2xl border border-slate-700 bg-slate-950/40 p-4'>{children}</div>;
+}
+
+function KartaSzczegolu({
+  etykieta,
+  wartosc,
+  wyroznienie = false,
+}: {
+  etykieta: string;
+  wartosc: ReactNode;
+  wyroznienie?: boolean;
+}) {
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${wyroznienie ? 'border-orange-400/30 bg-orange-400/10' : 'border-slate-700 bg-slate-950/40'}`}>
+      <p className='text-xs font-semibold uppercase tracking-[0.2em] text-slate-400'>{etykieta}</p>
+      <div className={`mt-2 text-sm ${wyroznienie ? 'font-semibold text-orange-100' : 'text-slate-100'}`}>{wartosc}</div>
+    </div>
+  );
+}
+
+function SzczegolySurowcaModal({
+  czyOtwarty,
+  surowiecId,
+  rekord,
+  onZamknij,
+  onUsun,
+  usuwanie,
+  onPrzyjecie,
+  onWydanie,
+  onKorekta,
+  onPrzeniesienie,
+}: {
+  czyOtwarty: boolean;
+  surowiecId: number | null;
+  rekord: StanMagazynowyDto | null;
+  onZamknij: () => void;
+  onUsun: () => void;
+  usuwanie: boolean;
+  onPrzyjecie: () => void;
+  onWydanie: () => void;
+  onKorekta: () => void;
+  onPrzeniesienie: () => void;
+}) {
+  const [szczegoly, ustawSzczegoly] = useState<SurowiecSzczegolyDto | null>(null);
+  const [ladowanie, ustawLadowanie] = useState(false);
+  const [blad, ustawBlad] = useState('');
+
+  useEffect(() => {
+    if (!czyOtwarty || !surowiecId) {
+      if (!czyOtwarty) {
+        ustawSzczegoly(null);
+        ustawBlad('');
+      }
+      return;
+    }
+
+    let aktywny = true;
+
+    const pobierzSzczegoly = async () => {
+      ustawLadowanie(true);
+      ustawBlad('');
+      try {
+        const odpowiedz = await klientApi.get<OdpowiedzApi<SurowiecSzczegolyDto>>(`/surowce/${surowiecId}`);
+        if (aktywny) {
+          ustawSzczegoly(odpowiedz.data.dane);
+        }
+      } catch (error) {
+        if (aktywny) {
+          ustawBlad(pobierzKomunikatBledu(error, 'Nie udalo sie pobrac szczegolow surowca.'));
+        }
+      } finally {
+        if (aktywny) {
+          ustawLadowanie(false);
+        }
+      }
+    };
+
+    void pobierzSzczegoly();
+
+    return () => {
+      aktywny = false;
+    };
+  }, [czyOtwarty, surowiecId]);
+
+  const tytul = rekord?.nazwa || szczegoly?.nazwa || 'Szczegoly surowca';
+  const dostawcy = szczegoly?.surowceDostawcy ?? [];
+
+  return (
+    <Modal
+      czyOtwarty={czyOtwarty}
+      onZamknij={onZamknij}
+      tytul={`Surowiec: ${tytul}`}
+      rozmiar='bardzoDuzy'
+      akcje={(
+        <>
+          <Przycisk wariant='niebezpieczny' onClick={onUsun} czyLaduje={usuwanie}>Usun</Przycisk>
+          <Przycisk wariant='drugorzedny' onClick={onZamknij}>Zamknij</Przycisk>
+          <Przycisk wariant='drugorzedny' onClick={onPrzyjecie}>Przyjecie</Przycisk>
+          <Przycisk wariant='drugorzedny' onClick={onWydanie}>Wydanie</Przycisk>
+          <Przycisk wariant='drugorzedny' onClick={onKorekta}>Korekta</Przycisk>
+          <Przycisk onClick={onPrzeniesienie}>Przeniesienie</Przycisk>
+        </>
+      )}
+    >
+      <div className='space-y-6'>
+        <section className='rounded-[28px] border border-orange-400/20 bg-gradient-to-br from-[#243447] via-[#1E2A3A] to-[#141c28] p-6 shadow-xl shadow-black/20'>
+          <div className='flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between'>
+            <div>
+              <div className='inline-flex rounded-full border border-orange-400/20 bg-orange-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-orange-200'>
+                Karta surowca
+              </div>
+              <h3 className='mt-3 text-3xl font-semibold text-slate-50'>{tytul}</h3>
+              <p className='mt-2 max-w-3xl text-sm text-slate-300'>
+                Podglad najwazniejszych informacji o surowcu, zgodny z kolorystyka magazynu i gotowy do szybkich operacji.
+              </p>
+            </div>
+            <div className='grid gap-3 sm:grid-cols-2 xl:min-w-[440px]'>
+              <KartaSzczegolu etykieta='Na stanie' wartosc={`${formatujLiczbe(rekord?.naStan ?? 0, 4)} ${rekord?.jednostka ?? szczegoly?.jednostka ?? ''}`} wyroznienie />
+              <KartaSzczegolu etykieta='Zapotrzebowanie' wartosc={formatujLiczbe(rekord?.zapotrzebowanie ?? 0, 4)} />
+              <KartaSzczegolu etykieta='Na produkcji' wartosc={formatujLiczbe(rekord?.naProdukcji ?? 0, 4)} />
+              <KartaSzczegolu etykieta='Zamowiono' wartosc={formatujLiczbe(rekord?.zamowiono ?? 0, 4)} />
+            </div>
+          </div>
+        </section>
+
+        {blad ? <div className='rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200'>{blad}</div> : null}
+
+        {ladowanie ? (
+          <div className='rounded-[28px] border border-slate-700 bg-slate-950/30 px-6 py-12 text-center text-sm text-slate-400'>
+            Ladowanie szczegolow surowca...
+          </div>
+        ) : (
+          <div className='grid gap-6 xl:grid-cols-[1.3fr_0.9fr]'>
+            <section className='space-y-6'>
+              <div className='rounded-[28px] border border-slate-700 bg-slate-950/30 p-5'>
+                <div className='mb-4 flex items-center justify-between gap-3'>
+                  <div>
+                    <h4 className='text-lg font-semibold text-slate-100'>Podstawowe informacje</h4>
+                    <p className='text-sm text-slate-400'>Najwazniejsze dane handlowe i operacyjne surowca.</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${szczegoly?.aktywny ?? rekord?.aktywny ? 'bg-emerald-500/15 text-emerald-200' : 'bg-slate-700 text-slate-300'}`}>
+                    {szczegoly?.aktywny ?? rekord?.aktywny ? 'Aktywny' : 'Nieaktywny'}
+                  </span>
+                </div>
+                <div className='grid gap-3 md:grid-cols-2'>
+                  <KartaSzczegolu etykieta='Nazwa' wartosc={szczegoly?.nazwa ?? rekord?.nazwa ?? '--'} />
+                  <KartaSzczegolu etykieta='ID surowca' wartosc={surowiecId ?? '--'} />
+                  <KartaSzczegolu etykieta='Jednostka' wartosc={szczegoly?.jednostka ?? rekord?.jednostka ?? '--'} />
+                  <KartaSzczegolu etykieta='Waluta' wartosc={szczegoly?.waluta ?? rekord?.waluta ?? '--'} />
+                  <KartaSzczegolu etykieta='Cena bazowa' wartosc={formatujWalute(Number(szczegoly?.cena ?? rekord?.cena ?? 0), szczegoly?.waluta ?? rekord?.waluta ?? 'PLN')} />
+                  <KartaSzczegolu etykieta='Stawka VAT' wartosc={`${szczegoly?.vat ?? 23}%`} />
+                </div>
+              </div>
+
+              <div className='rounded-[28px] border border-slate-700 bg-slate-950/30 p-5'>
+                <h4 className='text-lg font-semibold text-slate-100'>Stan i rozliczenie</h4>
+                <p className='mt-1 text-sm text-slate-400'>Podsumowanie gospodarki magazynowej dla wybranego surowca.</p>
+                <div className='mt-4 grid gap-3 md:grid-cols-2'>
+                  <KartaSzczegolu etykieta='Srednia cena zakupu' wartosc={formatujWalute(rekord?.sredniaCena ?? 0, rekord?.waluta ?? szczegoly?.waluta ?? 'PLN')} />
+                  <KartaSzczegolu etykieta='Wartosc zapasow' wartosc={formatujWalute(rekord?.wartoscZapasow ?? 0, rekord?.waluta ?? szczegoly?.waluta ?? 'PLN')} />
+                  <KartaSzczegolu etykieta='Aktualny stan' wartosc={`${formatujLiczbe(rekord?.naStan ?? 0, 4)} ${rekord?.jednostka ?? szczegoly?.jednostka ?? ''}`} />
+                  <KartaSzczegolu etykieta='Bilans operacyjny' wartosc={formatujLiczbe((rekord?.naStan ?? 0) + (rekord?.zamowiono ?? 0) - (rekord?.zapotrzebowanie ?? 0), 4)} />
+                </div>
+              </div>
+            </section>
+
+            <section className='space-y-6'>
+              <div className='rounded-[28px] border border-slate-700 bg-slate-950/30 p-5'>
+                <h4 className='text-lg font-semibold text-slate-100'>Dostawcy</h4>
+                <p className='mt-1 text-sm text-slate-400'>Powiazani dostawcy i ostatnio znane ceny zakupu.</p>
+                <div className='mt-4 space-y-3'>
+                  {dostawcy.length === 0 ? (
+                    <div className='rounded-2xl border border-dashed border-slate-600 bg-slate-950/30 px-4 py-6 text-sm text-slate-400'>
+                      Brak przypisanych dostawcow dla tego surowca.
+                    </div>
+                  ) : (
+                    dostawcy.map((pozycja) => (
+                      <div key={pozycja.id} className='rounded-2xl border border-slate-700 bg-[#1A2535] p-4'>
+                        <div className='flex items-start justify-between gap-3'>
+                          <div>
+                            <p className='font-semibold text-slate-100'>{pozycja.dostawca.nazwa}</p>
+                            <p className='mt-1 text-sm text-slate-400'>
+                              {[pozycja.dostawca.miasto, pozycja.dostawca.kraj].filter(Boolean).join(', ') || 'Brak lokalizacji'}
+                            </p>
+                          </div>
+                          <span className='rounded-full bg-orange-400/10 px-3 py-1 text-xs font-semibold text-orange-200'>
+                            {formatujWalute(Number(pozycja.cenaZakupu), pozycja.waluta)}
+                          </span>
+                        </div>
+                        <div className='mt-3 grid gap-2 text-sm text-slate-300'>
+                          <p>Kontakt: {pozycja.dostawca.osobaKontaktowa || 'brak osoby kontaktowej'}</p>
+                          <p>Email: {pozycja.dostawca.email || 'brak adresu email'}</p>
+                          <p>Telefon: {pozycja.dostawca.telefon || 'brak numeru telefonu'}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className='rounded-[28px] border border-slate-700 bg-slate-950/30 p-5'>
+                <h4 className='text-lg font-semibold text-slate-100'>Szybkie podsumowanie</h4>
+                <div className='mt-4 space-y-3 text-sm text-slate-300'>
+                  <div className='rounded-2xl border border-slate-700 bg-[#1A2535] px-4 py-3'>
+                    Cena referencyjna: <span className='font-semibold text-slate-100'>{formatujWalute(Number(szczegoly?.cena ?? rekord?.cena ?? 0), szczegoly?.waluta ?? rekord?.waluta ?? 'PLN')}</span>
+                  </div>
+                  <div className='rounded-2xl border border-slate-700 bg-[#1A2535] px-4 py-3'>
+                    Liczba dostawcow: <span className='font-semibold text-slate-100'>{dostawcy.length}</span>
+                  </div>
+                  <div className='rounded-2xl border border-slate-700 bg-[#1A2535] px-4 py-3'>
+                    Jednostka rozliczeniowa: <span className='font-semibold text-slate-100'>{szczegoly?.jednostka ?? rekord?.jednostka ?? '--'}</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
 }
 
 function opcjeMagazynow(magazyny: MagazynDto[]) {
@@ -1413,7 +1663,9 @@ export default function StanyMagazynowe() {
   const [pokazNieaktywne, ustawPokazNieaktywne] = useState(false);
   const [strona, ustawStrone] = useState(1);
   const [czyModalNowegoSurowca, ustawCzyModalNowegoSurowca] = useState(false);
-  const [modal, ustawModal] = useState<null | { typ: 'PRZYJECIE' | 'WYDANIE' | 'KOREKTA' | 'PRZENIESIENIE'; rekord: StanMagazynowyDto | null }>(null);
+  const [szczegolySurowca, ustawSzczegolySurowca] = useState<StanMagazynowyDto | null>(null);
+  const [modal, ustawModal] = useState<ModalOperacjiMagazynowej | null>(null);
+  const [usuwanieSurowcaId, ustawUsuwanieSurowcaId] = useState<number | null>(null);
 
   const pobierzStany = async () => {
     ustawLadowanie(true);
@@ -1497,6 +1749,51 @@ export default function StanyMagazynowe() {
     okno.print();
   };
 
+  const otworzSzczegolySurowca = (wiersz: StanMagazynowyDto) => {
+    ustawSzczegolySurowca(wiersz);
+  };
+
+  const otworzModalOperacji = (
+    typ: TypOperacjiMagazynowej,
+    rekord: StanMagazynowyDto,
+    powrotDoSzczegolow = false,
+  ) => {
+    if (powrotDoSzczegolow) {
+      ustawSzczegolySurowca(null);
+    }
+    ustawModal({ typ, rekord, powrotDoSzczegolow });
+  };
+
+  const zamknijModalOperacji = () => {
+    if (modal?.powrotDoSzczegolow && modal.rekord) {
+      ustawSzczegolySurowca(modal.rekord);
+    }
+    ustawModal(null);
+  };
+
+  const usunSurowiec = async (rekord: StanMagazynowyDto) => {
+    const potwierdzone = window.confirm(`Czy na pewno chcesz usunac surowiec "${rekord.nazwa}"?`);
+    if (!potwierdzone) return;
+
+    ustawUsuwanieSurowcaId(rekord.id);
+    ustawBlad('');
+
+    try {
+      await klientApi.delete(`/surowce/${rekord.id}`);
+      if (szczegolySurowca?.id === rekord.id) {
+        ustawSzczegolySurowca(null);
+      }
+      if (modal?.rekord?.id === rekord.id) {
+        ustawModal(null);
+      }
+      await odswiezWszystko();
+    } catch (error) {
+      ustawBlad(pobierzKomunikatBledu(error, 'Nie udalo sie usunac surowca.'));
+    } finally {
+      ustawUsuwanieSurowcaId(null);
+    }
+  };
+
   return (
     <div className='space-y-6 text-slate-100'>
       <section className={`${KLASY_KARTY} bg-gradient-to-br from-[#1E2A3A] via-[#182230] to-[#0f1724] p-6`}>
@@ -1559,7 +1856,7 @@ export default function StanyMagazynowe() {
               ) : (
                 widoczne.map((wiersz) => (
                   <tr key={wiersz.id} className='border-t border-slate-800 odd:bg-slate-900/20'>
-                    <td className='px-4 py-3'><button type='button' onClick={() => ustawSzukaj(wiersz.nazwa)} className='font-semibold text-orange-200 hover:text-orange-100'>{wiersz.nazwa}</button></td>
+                    <td className='px-4 py-3 text-left'><button type='button' onClick={() => otworzSzczegolySurowca(wiersz)} className='block w-full text-left font-semibold text-orange-200 hover:text-orange-100'>{wiersz.nazwa}</button></td>
                     <td className='px-4 py-3'>{formatujLiczbe(wiersz.zapotrzebowanie, 4)}</td>
                     <td className={`px-4 py-3 font-semibold ${wiersz.naStan <= 0 ? 'text-red-300' : 'text-slate-100'}`}>{formatujLiczbe(wiersz.naStan, 4)}</td>
                     <td className={`px-4 py-3 ${wiersz.naProdukcji < 0 ? 'text-red-300' : 'text-slate-100'}`}>{formatujLiczbe(wiersz.naProdukcji, 4)}</td>
@@ -1568,14 +1865,24 @@ export default function StanyMagazynowe() {
                     <td className='px-4 py-3'>{formatujLiczbe(wiersz.wartoscZapasow)} {wiersz.waluta}</td>
                     <td className='px-4 py-3'>{formatujLiczbe(wiersz.cena)} {wiersz.waluta}</td>
                     <td className='px-4 py-3'>{wiersz.waluta}</td>
-                    <td className='px-4 py-3'>
-                      <div className='flex flex-wrap gap-2'>
+                    <td className='px-4 py-3 whitespace-nowrap'>
+                      <div className='flex w-max flex-nowrap items-center gap-2'>
                         <button type='button' title='Zamow' onClick={() => (window.location.href = '/magazyn/zamowienia-dostawcow')} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-orange-200 hover:bg-slate-700'>📦</button>
-                        <button type='button' title='Przyjmij' onClick={() => ustawModal({ typ: 'PRZYJECIE', rekord: wiersz })} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-emerald-200 hover:bg-slate-700'>✅</button>
-                        <button type='button' title='Wydaj' onClick={() => ustawModal({ typ: 'WYDANIE', rekord: wiersz })} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-amber-200 hover:bg-slate-700'>📤</button>
-                        <button type='button' title='Korekta' onClick={() => ustawModal({ typ: 'KOREKTA', rekord: wiersz })} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-cyan-200 hover:bg-slate-700'>🧮</button>
-                        <button type='button' title='Przenies' onClick={() => ustawModal({ typ: 'PRZENIESIENIE', rekord: wiersz })} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-sky-200 hover:bg-slate-700'>🔄</button>
+                        <button type='button' title='Przyjmij' onClick={() => otworzModalOperacji('PRZYJECIE', wiersz)} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-emerald-200 hover:bg-slate-700'>✅</button>
+                        <button type='button' title='Wydaj' onClick={() => otworzModalOperacji('WYDANIE', wiersz)} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-amber-200 hover:bg-slate-700'>📤</button>
+                        <button type='button' title='Korekta' onClick={() => otworzModalOperacji('KOREKTA', wiersz)} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-cyan-200 hover:bg-slate-700'>🧮</button>
+                        <button type='button' title='Przenies' onClick={() => otworzModalOperacji('PRZENIESIENIE', wiersz)} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-sky-200 hover:bg-slate-700'>🔄</button>
                         <button type='button' title='Drukuj' onClick={() => drukuj(wiersz)} className='rounded-xl bg-slate-800 px-2.5 py-1.5 text-slate-200 hover:bg-slate-700'>🖨️</button>
+                        <button
+                          type='button'
+                          title='Usun'
+                          aria-label={`Usun surowiec ${wiersz.nazwa}`}
+                          onClick={() => void usunSurowiec(wiersz)}
+                          disabled={usuwanieSurowcaId === wiersz.id}
+                          className='rounded-xl bg-red-500/10 px-2.5 py-1.5 text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60'
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1594,11 +1901,38 @@ export default function StanyMagazynowe() {
         </div>
       </section>
 
-      <PrzyjecieFormularz czyOtwarty={modal?.typ === 'PRZYJECIE'} onZamknij={() => ustawModal(null)} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} />
-      <WydanieFormularz czyOtwarty={modal?.typ === 'WYDANIE'} onZamknij={() => ustawModal(null)} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} zlecenia={zlecenia} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} maxIlosc={modal?.rekord?.naStan} />
-      <KorektaFormularz czyOtwarty={modal?.typ === 'KOREKTA'} onZamknij={() => ustawModal(null)} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} />
-      <PrzeniesFormularz czyOtwarty={modal?.typ === 'PRZENIESIENIE'} onZamknij={() => ustawModal(null)} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} maxIlosc={modal?.rekord?.naStan} />
+      <PrzyjecieFormularz czyOtwarty={modal?.typ === 'PRZYJECIE'} onZamknij={zamknijModalOperacji} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} />
+      <WydanieFormularz czyOtwarty={modal?.typ === 'WYDANIE'} onZamknij={zamknijModalOperacji} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} zlecenia={zlecenia} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} maxIlosc={modal?.rekord?.naStan} />
+      <KorektaFormularz czyOtwarty={modal?.typ === 'KOREKTA'} onZamknij={zamknijModalOperacji} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} />
+      <PrzeniesFormularz czyOtwarty={modal?.typ === 'PRZENIESIENIE'} onZamknij={zamknijModalOperacji} onZapisano={odswiezWszystko} magazyny={magazyny} surowce={surowce} domyslnySurowiecId={modal?.rekord?.id} domyslnyMagazynId={magazynId ? Number(magazynId) : null} maxIlosc={modal?.rekord?.naStan} />
       <NowySurowiecFormularz czyOtwarty={czyModalNowegoSurowca} onZamknij={() => ustawCzyModalNowegoSurowca(false)} onZapisano={odswiezWszystko} />
+      <SzczegolySurowcaModal
+        czyOtwarty={Boolean(szczegolySurowca)}
+        surowiecId={szczegolySurowca?.id ?? null}
+        rekord={szczegolySurowca}
+        onZamknij={() => ustawSzczegolySurowca(null)}
+        onUsun={() => {
+          if (!szczegolySurowca) return;
+          void usunSurowiec(szczegolySurowca);
+        }}
+        usuwanie={usuwanieSurowcaId === szczegolySurowca?.id}
+        onPrzyjecie={() => {
+          if (!szczegolySurowca) return;
+          otworzModalOperacji('PRZYJECIE', szczegolySurowca, true);
+        }}
+        onWydanie={() => {
+          if (!szczegolySurowca) return;
+          otworzModalOperacji('WYDANIE', szczegolySurowca, true);
+        }}
+        onKorekta={() => {
+          if (!szczegolySurowca) return;
+          otworzModalOperacji('KOREKTA', szczegolySurowca, true);
+        }}
+        onPrzeniesienie={() => {
+          if (!szczegolySurowca) return;
+          otworzModalOperacji('PRZENIESIENIE', szczegolySurowca, true);
+        }}
+      />
     </div>
   );
 }

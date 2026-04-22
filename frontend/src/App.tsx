@@ -11,8 +11,11 @@ const Pracownicy = lazy(() => import('./strony/Pracownicy'));
 const Produkty = lazy(() => import('./strony/Produkty'));
 const FormularzProduktu = lazy(() => import('./strony/FormularzProduktu'));
 const Zamowienia = lazy(() => import('./strony/Zamowienia'));
+const ZamowienieZgrupowane = lazy(() => import('./strony/ZamowienieZgrupowane'));
+const SzczegolyZamowienia = lazy(() => import('./strony/SzczegolyZamowienia'));
 const PlanProdukcji = lazy(() => import('./strony/PlanProdukcji'));
 const ZleceniaProdukcyjne = lazy(() => import('./strony/ZleceniaProdukcyjne'));
+const SzczegolyZleceniaProdukcyjnego = lazy(() => import('./strony/SzczegolyZleceniaProdukcyjnego'));
 const HistoriaPracy = lazy(() => import('./strony/HistoriaPracy'));
 const HistoriaWejscWyjsc = lazy(() => import('./strony/HistoriaWejscWyjsc'));
 const StanyMagazynowe = lazy(() => import('./strony/magazyn/StanyMagazynowe'));
@@ -86,7 +89,10 @@ function App() {
             <Route path='/produkty/nowy' element={<FormularzProduktu />} />
             <Route path='/produkty/:id/edytuj' element={<FormularzProduktu />} />
             <Route path='/zamowienia' element={<Zamowienia />} />
+            <Route path='/zamowienia/zgrupowane' element={<ZamowienieZgrupowane />} />
+            <Route path='/zamowienia/:id' element={<SzczegolyZamowienia />} />
             <Route path='/zlecenia-produkcyjne' element={<ZleceniaProdukcyjne />} />
+            <Route path='/zlecenia-produkcyjne/:id' element={<SzczegolyZleceniaProdukcyjnego />} />
             <Route path='/plan-produkcji' element={<PlanProdukcji />} />
             <Route path='/historia-pracy' element={<HistoriaPracy />} />
             <Route path='/historia-wejsc-wyjsc' element={<Navigate to='/historia-wejsc-wyjsc/przeglad-zdarzen' replace />} />

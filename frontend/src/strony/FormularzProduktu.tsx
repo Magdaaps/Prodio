@@ -50,6 +50,21 @@ type ZakladkaId = 'podstawowe' | 'technologia' | 'surowce';
 const klasySelect = 'w-full rounded-lg border border-obramowanie bg-tlo-glowne px-4 py-2.5 text-sm text-tekst-glowny focus:border-akcent focus:outline-none transition-colors';
 const klasyTextarea = 'w-full rounded-lg border border-obramowanie bg-tlo-glowne px-4 py-2.5 text-sm text-tekst-glowny focus:border-akcent focus:outline-none resize-y';
 
+function pobierzKomunikatBledu(blad: unknown, domyslnyKomunikat: string) {
+  const status = typeof blad === 'object' && blad !== null && 'response' in blad
+    ? (blad as { response?: { status?: number } }).response?.status
+    : undefined;
+  const wiadomosc = typeof blad === 'object' && blad !== null && 'response' in blad
+    ? (blad as { response?: { data?: { wiadomosc?: string } } }).response?.data?.wiadomosc
+    : undefined;
+
+  if (status === 413) {
+    return 'Wybrane zdjecie jest za duze do zapisania. Sprobuj mniejszego pliku.';
+  }
+
+  return wiadomosc || domyslnyKomunikat;
+}
+
 export default function FormularzProduktu() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -126,7 +141,6 @@ export default function FormularzProduktu() {
   const waliduj = () => {
     const b: Partial<Record<keyof FormularzProduktu, string>> = {};
     if (!form.nazwa.trim()) b.nazwa = 'Nazwa produktu jest wymagana.';
-    if (!form.idProdio.trim()) b.idProdio = 'ID Prodio jest wymagane.';
     ustawBledyPol(b);
     return Object.keys(b).length === 0;
   };
@@ -135,7 +149,7 @@ export default function FormularzProduktu() {
     if (!waliduj()) { ustawBlad('Uzupelnij wymagane pola.'); return; }
     ustawZapisywanie(true); ustawBlad('');
     const payload = {
-      idProdio: form.idProdio.trim(), nazwa: form.nazwa.trim(),
+      nazwa: form.nazwa.trim(),
       ean: form.ean.trim() || undefined, dodatkoweOznaczenia: form.dodatkoweOznaczenia.trim() || undefined,
       wymiar: form.wymiar.trim() || undefined, sposobPakowania: form.sposobPakowania.trim() || undefined,
       informacjeNiewidoczne: form.informacjeNiewidoczne.trim() || undefined,
@@ -154,7 +168,12 @@ export default function FormularzProduktu() {
         if (zostac) navigate(`/produkty/${r.data.dane.id}/edytuj`);
         else navigate('/produkty');
       }
-    } catch { ustawBlad(trybEdycji ? 'Nie udalo sie zapisac zmian.' : 'Nie udalo sie utworzyc produktu.'); }
+    } catch (bladZapisu) {
+      ustawBlad(pobierzKomunikatBledu(
+        bladZapisu,
+        trybEdycji ? 'Nie udalo sie zapisac zmian.' : 'Nie udalo sie utworzyc produktu.',
+      ));
+    }
     finally { ustawZapisywanie(false); }
   };
 
@@ -173,7 +192,7 @@ export default function FormularzProduktu() {
       <div className='rounded-2xl border border-obramowanie bg-tlo-karta shadow-sm'>
         {!trybEdycji && duplicateFromId ? (
           <div className='border-b border-obramowanie bg-akcent/10 px-6 py-3 text-sm text-akcent'>
-            Tryb duplikacji: dane zostaly skopiowane z istniejacego produktu. Wpisz nowe `ID Prodio`, a potem zapisz kopie.
+            Tryb duplikacji: dane zostaly skopiowane z istniejacego produktu. Nowe ID Prodio zostanie nadane automatycznie po zapisaniu kopii.
           </div>
         ) : null}
         <div className='flex flex-col gap-4 px-6 py-4 border-b border-obramowanie sm:flex-row sm:items-center sm:justify-between'>
@@ -203,7 +222,7 @@ export default function FormularzProduktu() {
 
         <div className='p-6'>
           {blad && <div className='mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300'>{blad}</div>}
-          {zakladka === 'podstawowe' && <ZakladkaPodstawowe form={form} grupy={grupy} klienci={klienci} bledyPol={bledyPol} setPole={setPole} zdjeciaRef={zdjeciaRef} plikiRef={plikiRef} onGrupaDodana={pobierzSlowniki} />}
+          {zakladka === 'podstawowe' && <ZakladkaPodstawowe form={form} grupy={grupy} klienci={klienci} bledyPol={bledyPol} setPole={setPole} zdjeciaRef={zdjeciaRef} plikiRef={plikiRef} onGrupaDodana={pobierzSlowniki} trybEdycji={trybEdycji} />}
           {zakladka === 'technologia' && (trybEdycji && id
             ? <ZakladkaTechnologia produktId={parseInt(id)} />
             : <div className='flex items-center justify-center py-24 text-tekst-drugorzedny text-sm'>Technologia produkcji zostanie skonfigurowana po zapisaniu produktu.</div>
@@ -229,9 +248,10 @@ interface PropsZakladki {
   setPole: <K extends keyof FormularzProduktu>(pole: K, v: FormularzProduktu[K]) => void;
   zdjeciaRef: React.MutableRefObject<File[]>; plikiRef: React.MutableRefObject<File[]>;
   onGrupaDodana: () => Promise<void>;
+  trybEdycji: boolean;
 }
 
-function ZakladkaPodstawowe({ form, grupy, klienci, bledyPol, setPole, zdjeciaRef, plikiRef, onGrupaDodana }: PropsZakladki) {
+function ZakladkaPodstawowe({ form, grupy, klienci, bledyPol, setPole, zdjeciaRef, plikiRef, onGrupaDodana, trybEdycji }: PropsZakladki) {
   const [zdjeciaPreview, ustawZdjeciaPreview] = useState<string[]>([]);
   const [plikiNazwy, ustawPlikiNazwy] = useState<string[]>([]);
   const [dragZdj, ustawDragZdj] = useState(false);
@@ -351,7 +371,13 @@ function ZakladkaPodstawowe({ form, grupy, klienci, bledyPol, setPole, zdjeciaRe
           </div>
         </div>
 
-        <Pole etykieta='ID Prodio' value={form.idProdio} onChange={e => setPole('idProdio', e.target.value)} bladOpisu={bledyPol.idProdio} required />
+        <Pole
+          etykieta='ID Prodio'
+          value={trybEdycji ? form.idProdio : 'Zostanie nadane automatycznie po zapisaniu'}
+          readOnly
+          disabled
+          className='cursor-not-allowed opacity-70'
+        />
       </div>
 
       <div className='space-y-3'>

@@ -474,6 +474,98 @@ export async function pobierzZlecenieProdukcyjne(req: Request, res: Response): P
   }
 }
 
+export async function inicjalizujZleceniaDlaZamowienia(req: Request, res: Response): Promise<void> {
+  try {
+    const zamowienieId = parseIntValue(req.body.zamowienieId);
+
+    if (!zamowienieId) {
+      res.status(400).json({ sukces: false, wiadomosc: 'Identyfikator zamowienia jest wymagany.' });
+      return;
+    }
+
+    const wynik = await prisma.$transaction(async (tx) => {
+      const liczbaIstniejacych = await tx.zlecenieProdukcyjne.count({
+        where: { zamowienieId },
+      });
+
+      if (liczbaIstniejacych > 0) {
+        return { utworzono: false, liczbaNowych: 0 };
+      }
+
+      const zamowienie = await tx.zamowienie.findUnique({
+        where: { id: zamowienieId },
+        include: {
+          pozycje: {
+            include: {
+              produkt: {
+                include: {
+                  bomOperacji: {
+                    orderBy: { kolejnosc: 'asc' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!zamowienie) {
+        throw new Error('NOT_FOUND');
+      }
+
+      let numerKolejny = 1;
+      let liczbaNowych = 0;
+
+      for (const pozycja of zamowienie.pozycje) {
+        const produkt = pozycja.produkt;
+        const operacje = produkt?.bomOperacji ?? [];
+
+        let poprzednikId: number | null = null;
+
+        for (const operacja of operacje) {
+          const zlecenie: { id: number } = await tx.zlecenieProdukcyjne.create({
+            data: {
+              numer: formatujNumerZlecenia(numerKolejny, zamowienieId, new Date().getFullYear()),
+              zamowienieId,
+              maszynaId: operacja.maszynaId,
+              status: 'STOP',
+              aktywne: true,
+              iloscPlan: Number(pozycja.ilosc ?? 0),
+              iloscWykonana: 0,
+              iloscBrakow: 0,
+              planowanyStart: null,
+              planowanyStop: zamowienie.oczekiwanaData ?? null,
+              poprzednikId,
+              normaSztGodz: parseNumberValue(operacja.normaSztGodz),
+              przypisaniPracownicyIds: [],
+              tagi: operacja.tagi ?? [],
+              parametry: operacja.parametry ?? null,
+              uwagi: null,
+              maszynaKoncowa: operacja.maszynaKoncowa,
+            },
+            select: { id: true },
+          });
+
+          poprzednikId = zlecenie.id;
+          numerKolejny += 1;
+          liczbaNowych += 1;
+        }
+      }
+
+      return { utworzono: true, liczbaNowych };
+    });
+
+    res.status(201).json({ sukces: true, dane: wynik });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'NOT_FOUND') {
+      res.status(404).json({ sukces: false, wiadomosc: 'Zamowienie nie istnieje.' });
+      return;
+    }
+
+    res.status(500).json({ sukces: false, wiadomosc: 'Nie udalo sie zainicjalizowac zlecen dla zamowienia.' });
+  }
+}
+
 export async function utworzZlecenieProdukcyjne(req: Request, res: Response): Promise<void> {
   try {
     const zamowienieId = parseIntValue(req.body.zamowienieId);
@@ -509,6 +601,7 @@ export async function utworzZlecenieProdukcyjne(req: Request, res: Response): Pr
         normaSztGodz: parseNumberValue(req.body.normaSztGodz),
         przypisaniPracownicyIds: parseIntArray(req.body.przypisaniPracownicyIds),
         tagi: parseStringArray(req.body.tagi),
+        parametry: req.body.parametry ? String(req.body.parametry) : undefined,
         uwagi: req.body.uwagi ? String(req.body.uwagi) : undefined,
         maszynaKoncowa: req.body.maszynaKoncowa ?? false,
       },
@@ -551,6 +644,8 @@ export async function zaktualizujZlecenieProdukcyjne(req: Request, res: Response
             ? parseIntArray(req.body.przypisaniPracownicyIds)
             : undefined,
         tagi: req.body.tagi !== undefined ? parseStringArray(req.body.tagi) : undefined,
+        parametry:
+          req.body.parametry !== undefined ? (req.body.parametry ? String(req.body.parametry) : null) : undefined,
         uwagi: req.body.uwagi !== undefined ? (req.body.uwagi ? String(req.body.uwagi) : null) : undefined,
         maszynaKoncowa: req.body.maszynaKoncowa,
       },

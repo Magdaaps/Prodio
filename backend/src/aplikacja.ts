@@ -23,7 +23,7 @@ import { obslugaBledow } from './middleware/obslugaBledow';
 const aplikacja = express();
 
 aplikacja.use(cors({ origin: 'http://localhost:5173', credentials: true }));
-aplikacja.use(express.json());
+aplikacja.use(express.json({ limit: '10mb' }));
 aplikacja.use(cookieParser());
 
 aplikacja.use('/api/autentykacja', trasyAutentykacji);

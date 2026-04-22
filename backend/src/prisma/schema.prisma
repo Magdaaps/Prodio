@@ -73,7 +73,10 @@ model Pracownik {
   nazwisko         String
   pin              String?
   kodQr            String?
+  telefon          String?
   stanowisko       String?
+  dodatkoweInformacje String?
+  zdjecie          String?
   stawkaGodzinowa  Decimal  @default(0) @db.Decimal(10, 2)
   kolorAvatara     String   @default("#3B82F6")
   aktywny          Boolean  @default(true)
@@ -311,6 +314,7 @@ model ZlecenieProdukcyjne {
   normaSztGodz        Decimal              @default(0) @db.Decimal(10, 2)
   przypisaniPracownicyIds Int[]            @default([])
   tagi                String[]
+  parametry           String?
   uwagi               String?
   maszynaKoncowa      Boolean              @default(false)
   utworzonyW          DateTime             @default(now())

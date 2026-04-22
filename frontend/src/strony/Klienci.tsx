@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import klientApi from '../api/klient';
 import TabelaDanych from '../komponenty/TabelaDanych';
@@ -82,6 +83,7 @@ function OdznakaAktywnosci({ aktywny }: { aktywny: boolean }) {
 }
 
 export default function Klienci() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     strona,
     iloscNaStrone,
@@ -103,6 +105,7 @@ export default function Klienci() {
   const [bladFormularza, ustawBladFormularza] = useState('');
   const [zapisywanie, ustawZapisywanie] = useState(false);
   const [usuwanieId, ustawUsuwanieId] = useState<number | null>(null);
+  const klientIdZUrl = searchParams.get('klientId');
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -146,6 +149,16 @@ export default function Klienci() {
     void pobierzKlientow();
   }, [pobierzKlientow]);
 
+  const wyczyscParametrKlienta = useCallback(() => {
+    if (!searchParams.has('klientId')) {
+      return;
+    }
+
+    const noweParametry = new URLSearchParams(searchParams);
+    noweParametry.delete('klientId');
+    setSearchParams(noweParametry, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const otworzModalDodawania = () => {
     ustawEdytowanyKlient(null);
     ustawFormularz(pustyFormularz);
@@ -153,12 +166,12 @@ export default function Klienci() {
     ustawCzyModalOtwarty(true);
   };
 
-  const otworzModalEdycji = (klient: Klient) => {
+  const otworzModalEdycji = useCallback((klient: Klient) => {
     ustawEdytowanyKlient(klient);
     ustawFormularz(mapujKlientaNaFormularz(klient));
     ustawBladFormularza('');
     ustawCzyModalOtwarty(true);
-  };
+  }, []);
 
   const zamknijModal = () => {
     ustawCzyModalOtwarty(false);
@@ -166,6 +179,40 @@ export default function Klienci() {
     ustawFormularz(pustyFormularz);
     ustawBladFormularza('');
   };
+
+  const otworzKlientaZUrl = useCallback(async (id: number) => {
+    const klientZListy = klienci.find((klient) => klient.id === id);
+
+    if (klientZListy) {
+      otworzModalEdycji(klientZListy);
+      wyczyscParametrKlienta();
+      return;
+    }
+
+    try {
+      const odpowiedz = await klientApi.get<OdpowiedzApi<Klient>>(`/klienci/${id}`);
+      otworzModalEdycji(odpowiedz.data.dane);
+    } catch {
+      ustawBlad('Nie udało się otworzyć szczegółów wybranego klienta.');
+    } finally {
+      wyczyscParametrKlienta();
+    }
+  }, [klienci, otworzModalEdycji, wyczyscParametrKlienta]);
+
+  useEffect(() => {
+    if (!klientIdZUrl || ladowanie) {
+      return;
+    }
+
+    const id = Number(klientIdZUrl);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      wyczyscParametrKlienta();
+      return;
+    }
+
+    void otworzKlientaZUrl(id);
+  }, [klientIdZUrl, ladowanie, otworzKlientaZUrl, wyczyscParametrKlienta]);
 
   const ustawPoleFormularza = <K extends keyof FormularzKlienta>(
     klucz: K,
