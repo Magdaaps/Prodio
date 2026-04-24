@@ -8,7 +8,9 @@ import {
   Briefcase,
   ClipboardList,
   LayoutGrid,
+  MonitorSmartphone,
   PackageCheck,
+  PackageOpen,
   PauseCircle,
   PlayCircle,
   RefreshCcw,
@@ -334,6 +336,20 @@ export default function Pulpit() {
             </p>
           </div>
           <div className='flex flex-wrap items-center gap-3'>
+            <a
+              href='/panel-produkcja'
+              className='inline-flex items-center gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-medium text-emerald-200 transition hover:bg-emerald-400/15'
+            >
+              <MonitorSmartphone size={16} />
+              Panel Produkcja
+            </a>
+            <a
+              href='/panel-pakowanie'
+              className='inline-flex items-center gap-2 rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 text-sm font-medium text-sky-200 transition hover:bg-sky-400/15'
+            >
+              <PackageOpen size={16} />
+              Panel Pakowanie
+            </a>
             <div className='rounded-2xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-sm text-slate-300'>
               Dzisiaj: <span className='font-semibold text-orange-200'>{new Date().toLocaleDateString('pl-PL')}</span>
             </div>
@@ -700,5 +716,4 @@ export default function Pulpit() {
     </div>
   );
 }
-
 

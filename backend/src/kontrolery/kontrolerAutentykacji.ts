@@ -89,17 +89,21 @@ export async function zaloguj(req: Request, res: Response): Promise<void> {
 
     const wygasaW = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    await prisma.tokenOdswiezania.deleteMany({
-      where: { uzytkownikId: uzytkownik.id },
-    });
+    try {
+      await prisma.tokenOdswiezania.deleteMany({
+        where: { uzytkownikId: uzytkownik.id },
+      });
 
-    await prisma.tokenOdswiezania.create({
-      data: {
-        token: tokenOdswiezania,
-        uzytkownikId: uzytkownik.id,
-        wygasaW,
-      },
-    });
+      await prisma.tokenOdswiezania.create({
+        data: {
+          token: tokenOdswiezania,
+          uzytkownikId: uzytkownik.id,
+          wygasaW,
+        },
+      });
+    } catch (blad) {
+      console.error('[autentykacja:zaloguj] zapis tokenu odswiezania nie powiodl sie', blad);
+    }
 
     ustawCiasteczka(res, tokenDostepu, tokenOdswiezania);
 
@@ -113,7 +117,9 @@ export async function zaloguj(req: Request, res: Response): Promise<void> {
         rola: uzytkownik.rola,
       },
     });
-  } catch {
+  } catch (blad) {
+    console.error('[autentykacja:zaloguj]', blad);
+    const wiadomosc = blad instanceof Error ? blad.message : 'Blad serwera';
     res.status(500).json({ sukces: false, wiadomosc: 'Błąd serwera' });
   }
 }

@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import klientApi from '../api/klient';
+import Rozwijane from '../komponenty/ui/Rozwijane';
 import type { OdpowiedzApi, StatusZlecenia } from '../typy/indeks';
 
 type ZakladkaZlecenia = 'Edytuj' | 'Historia pracy' | 'Zuzycie surowcow' | 'Pauzy' | 'Cale zamowienie';
@@ -83,6 +84,7 @@ type SzczegolyZleceniaProdukcyjnego = {
     zewnetrznyNumer: string | null;
     oczekiwanaData: string | null;
     klient: { id: number; nazwa: string } | null;
+    utworzyl: { id: number; imie: string; nazwisko: string; email: string } | null;
     pozycje: Array<{
       id: number;
       ilosc: number;
@@ -129,6 +131,14 @@ const STATUS_META: Record<StatusZlecenia, { etykieta: string; klasy: string }> =
   GOTOWE: { etykieta: 'GOTOWE', klasy: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300' },
   ANULOWANE: { etykieta: 'ANULOWANE', klasy: 'border-red-500/30 bg-red-500/15 text-red-300' },
 };
+
+const STATUSY_ZLECEN: Array<{ wartosc: StatusZlecenia; etykieta: string }> = [
+  { wartosc: 'STOP', etykieta: 'STOP' },
+  { wartosc: 'W_TOKU', etykieta: 'W TOKU' },
+  { wartosc: 'PAUZA', etykieta: 'PAUZA' },
+  { wartosc: 'GOTOWE', etykieta: 'GOTOWE' },
+  { wartosc: 'ANULOWANE', etykieta: 'ANULOWANE' },
+];
 
 const ZAKLADKI: ZakladkaZlecenia[] = ['Edytuj', 'Historia pracy', 'Zuzycie surowcow', 'Pauzy', 'Cale zamowienie'];
 
@@ -288,6 +298,10 @@ export default function SzczegolyZleceniaProdukcyjnego() {
   const [uwagiRobocze, ustawUwagiRobocze] = useState('');
   const [zapisywanieTagow, ustawZapisywanieTagow] = useState(false);
   const [bladTagow, ustawBladTagow] = useState('');
+  const [czyEdycjaStatusu, ustawCzyEdycjaStatusu] = useState(false);
+  const [statusRoboczy, ustawStatusRoboczy] = useState<StatusZlecenia>('STOP');
+  const [zapisywanieStatusu, ustawZapisywanieStatusu] = useState(false);
+  const [bladStatusu, ustawBladStatusu] = useState('');
   const [aktywnaZakladka, ustawAktywnaZakladka] = useState<ZakladkaZlecenia>('Edytuj');
   const pickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -301,6 +315,7 @@ export default function SzczegolyZleceniaProdukcyjnego() {
       ustawWybranePracownicyIds(odpowiedz.data.dane.przypisaniPracownicyIds ?? []);
       ustawTagiRobocze((odpowiedz.data.dane.tagi ?? []).join(', '));
       ustawUwagiRobocze(odpowiedz.data.dane.uwagi ?? '');
+      ustawStatusRoboczy(odpowiedz.data.dane.status);
     } catch {
       ustawBlad('Nie udalo sie pobrac szczegolow zlecenia produkcyjnego.');
       ustawDane(null);
@@ -409,6 +424,36 @@ export default function SzczegolyZleceniaProdukcyjnego() {
 
   const sumaPauzSekundy = 0;
 
+  const zbudujPayloadAktualizacji = (nadpisania?: Partial<SzczegolyZleceniaProdukcyjnego>) => {
+    if (!dane) return null;
+
+    const zrodlo = { ...dane, ...nadpisania };
+    return {
+      maszynaId: String(zrodlo.maszynaId),
+      iloscPlan: String(zrodlo.iloscPlan),
+      iloscWykonana: String(zrodlo.iloscWykonana),
+      iloscBrakow: String(zrodlo.iloscBrakow),
+      poprzednikId: zrodlo.poprzednikId ? String(zrodlo.poprzednikId) : null,
+      planowanyStart: zrodlo.planowanyStart,
+      planowanyStop: zrodlo.planowanyStop,
+      normaSztGodz: String(zrodlo.normaSztGodz ?? 0),
+      status: zrodlo.status,
+      tagi: zrodlo.tagi,
+      przypisaniPracownicyIds: zrodlo.przypisaniPracownicyIds,
+      aktywne: zrodlo.aktywne,
+      maszynaKoncowa: zrodlo.maszynaKoncowa,
+      uwagi: zrodlo.uwagi ?? '',
+    };
+  };
+
+  const etykietaUzytkownikaZlecajacego = useMemo(() => {
+    const utworzyl = dane?.zamowienie.utworzyl;
+    if (!utworzyl) return 'Brak informacji';
+
+    const nazwa = `${utworzyl.imie} ${utworzyl.nazwisko}`.trim();
+    return nazwa || utworzyl.email || 'Brak informacji';
+  }, [dane?.zamowienie.utworzyl]);
+
   const zapiszPracownikow = async () => {
     if (!dane) return;
 
@@ -416,22 +461,10 @@ export default function SzczegolyZleceniaProdukcyjnego() {
     ustawBladPracownikow('');
 
     try {
-      await klientApi.put(`/zlecenia-produkcyjne/${dane.id}`, {
-        maszynaId: String(dane.maszynaId),
-        iloscPlan: String(dane.iloscPlan),
-        iloscWykonana: String(dane.iloscWykonana),
-        iloscBrakow: String(dane.iloscBrakow),
-        poprzednikId: dane.poprzednikId ? String(dane.poprzednikId) : null,
-        planowanyStart: dane.planowanyStart,
-        planowanyStop: dane.planowanyStop,
-        normaSztGodz: String(dane.normaSztGodz ?? 0),
-        status: dane.status,
-        tagi: dane.tagi,
-        przypisaniPracownicyIds: wybranePracownicyIds,
-        aktywne: dane.aktywne,
-        maszynaKoncowa: dane.maszynaKoncowa,
-        uwagi: dane.uwagi ?? '',
-      });
+      const payload = zbudujPayloadAktualizacji({ przypisaniPracownicyIds: wybranePracownicyIds });
+      if (!payload) return;
+
+      await klientApi.put(`/zlecenia-produkcyjne/${dane.id}`, payload);
 
       ustawCzyPickerOtwarty(false);
       ustawSzukajPracownika('');
@@ -450,25 +483,17 @@ export default function SzczegolyZleceniaProdukcyjnego() {
     ustawBladTagow('');
 
     try {
-      await klientApi.put(`/zlecenia-produkcyjne/${dane.id}`, {
-        maszynaId: String(dane.maszynaId),
-        iloscPlan: String(dane.iloscPlan),
-        iloscWykonana: String(dane.iloscWykonana),
-        iloscBrakow: String(dane.iloscBrakow),
-        poprzednikId: dane.poprzednikId ? String(dane.poprzednikId) : null,
-        planowanyStart: dane.planowanyStart,
-        planowanyStop: dane.planowanyStop,
-        normaSztGodz: String(dane.normaSztGodz ?? 0),
-        status: dane.status,
+      const payload = zbudujPayloadAktualizacji({
         tagi: tagiRobocze
           .split(',')
           .map((tag) => tag.trim())
           .filter(Boolean),
         przypisaniPracownicyIds: wybranePracownicyIds,
-        aktywne: dane.aktywne,
-        maszynaKoncowa: dane.maszynaKoncowa,
         uwagi: uwagiRobocze,
       });
+      if (!payload) return;
+
+      await klientApi.put(`/zlecenia-produkcyjne/${dane.id}`, payload);
 
       ustawCzyEdycjaTagow(false);
       await pobierz();
@@ -476,6 +501,33 @@ export default function SzczegolyZleceniaProdukcyjnego() {
       ustawBladTagow('Nie udalo sie zapisac tagow i uwag.');
     } finally {
       ustawZapisywanieTagow(false);
+    }
+  };
+
+  const zapiszStatus = async () => {
+    if (!dane || statusRoboczy === dane.status) {
+      ustawCzyEdycjaStatusu(false);
+      ustawBladStatusu('');
+      return;
+    }
+
+    ustawZapisywanieStatusu(true);
+    ustawBladStatusu('');
+
+    try {
+      const payload = zbudujPayloadAktualizacji({
+        status: statusRoboczy,
+        przypisaniPracownicyIds: wybranePracownicyIds,
+      });
+      if (!payload) return;
+
+      await klientApi.put(`/zlecenia-produkcyjne/${dane.id}`, payload);
+      ustawCzyEdycjaStatusu(false);
+      await pobierz();
+    } catch {
+      ustawBladStatusu('Nie udalo sie zaktualizowac statusu zlecenia.');
+    } finally {
+      ustawZapisywanieStatusu(false);
     }
   };
 
@@ -542,10 +594,65 @@ export default function SzczegolyZleceniaProdukcyjnego() {
                 <User className='h-4 w-4 text-akcent' />
                 {dane.zamowienie.klient?.nazwa || 'Produkcja na magazyn'}
               </span>
-              <span className={`inline-flex items-center rounded-full border px-4 py-1.5 text-xs font-semibold tracking-[0.18em] ${metaStatusu?.klasy}`}>
-                {metaStatusu?.etykieta}
+              <span className='inline-flex items-center gap-2'>
+                <User className='h-4 w-4 text-akcent' />
+                {etykietaUzytkownikaZlecajacego}
               </span>
+              <div className='flex flex-wrap items-center gap-2'>
+                <span className={`inline-flex items-center rounded-full border px-4 py-1.5 text-xs font-semibold tracking-[0.18em] ${metaStatusu?.klasy}`}>
+                  {metaStatusu?.etykieta}
+                </span>
+                <button
+                  type='button'
+                  onClick={() => {
+                    ustawCzyEdycjaStatusu((poprzednie) => !poprzednie);
+                    ustawStatusRoboczy(dane.status);
+                    ustawBladStatusu('');
+                  }}
+                  className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-obramowanie text-tekst-glowny transition hover:border-akcent hover:text-akcent'
+                  title='Zmien status recznie'
+                  aria-label='Zmien status recznie'
+                >
+                  <Pencil className='h-4 w-4' />
+                </button>
+              </div>
             </div>
+
+            {czyEdycjaStatusu ? (
+              <div className='max-w-md rounded-2xl border border-obramowanie bg-tlo-glowne/40 p-4'>
+                <div className='flex flex-col gap-3 sm:flex-row sm:items-end'>
+                  <Rozwijane
+                    opcje={STATUSY_ZLECEN}
+                    wartosc={statusRoboczy}
+                    onZmiana={(wartosc) => ustawStatusRoboczy(wartosc as StatusZlecenia)}
+                    etykieta='Status zlecenia'
+                    className='min-w-[220px] flex-1'
+                  />
+                  <div className='flex gap-2'>
+                    <button
+                      type='button'
+                      onClick={() => void zapiszStatus()}
+                      disabled={zapisywanieStatusu}
+                      className='inline-flex h-11 items-center rounded-full bg-akcent px-4 text-sm font-semibold text-white transition hover:bg-akcent-hover disabled:cursor-not-allowed disabled:opacity-60'
+                    >
+                      {zapisywanieStatusu ? 'Zapisywanie...' : 'Zapisz status'}
+                    </button>
+                    <button
+                      type='button'
+                      onClick={() => {
+                        ustawCzyEdycjaStatusu(false);
+                        ustawStatusRoboczy(dane.status);
+                        ustawBladStatusu('');
+                      }}
+                      className='inline-flex h-11 items-center rounded-full border border-obramowanie px-4 text-sm font-semibold text-tekst-glowny transition hover:border-akcent hover:text-akcent'
+                    >
+                      Anuluj
+                    </button>
+                  </div>
+                </div>
+                {bladStatusu ? <p className='mt-3 text-sm text-red-300'>{bladStatusu}</p> : null}
+              </div>
+            ) : null}
           </div>
 
           <div className='flex flex-wrap items-center gap-2 text-sm font-semibold'>

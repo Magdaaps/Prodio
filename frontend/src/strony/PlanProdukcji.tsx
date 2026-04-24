@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DragDropContext,
   Draggable,
   Droppable,
   type DropResult,
 } from '@hello-pangea/dnd';
+import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Factory, Package2, RefreshCcw, User2 } from 'lucide-react';
 import klientApi from '../api/klient';
 import Rozwijane from '../komponenty/ui/Rozwijane';
@@ -100,9 +101,21 @@ function przeniesZlecenie(
   return kolejne;
 }
 
-function KartaZlecenia({ zlecenie }: { zlecenie: ZlecenieKanban }) {
+function KartaZlecenia({ zlecenie, onKlik }: { zlecenie: ZlecenieKanban; onKlik: () => void }) {
+  const poczatekRef = useRef<{ x: number; y: number } | null>(null);
+
   return (
-    <article className='rounded-2xl border border-obramowanie bg-tlo-karta p-4 shadow-lg shadow-black/10 transition-transform hover:-translate-y-0.5'>
+    <article
+      className='cursor-pointer rounded-2xl border border-obramowanie bg-tlo-karta p-4 shadow-lg shadow-black/10 transition-transform hover:-translate-y-0.5'
+      onMouseDown={(e) => { poczatekRef.current = { x: e.clientX, y: e.clientY }; }}
+      onMouseUp={(e) => {
+        if (!poczatekRef.current) return;
+        const dx = Math.abs(e.clientX - poczatekRef.current.x);
+        const dy = Math.abs(e.clientY - poczatekRef.current.y);
+        if (dx < 5 && dy < 5) onKlik();
+        poczatekRef.current = null;
+      }}
+    >
       <div className='flex items-start justify-between gap-3'>
         <div>
           <p className='text-sm font-semibold tracking-[0.16em] text-akcent'>{zlecenie.numer}</p>
@@ -149,6 +162,7 @@ function KartaZlecenia({ zlecenie }: { zlecenie: ZlecenieKanban }) {
 }
 
 export default function PlanProdukcji() {
+  const navigate = useNavigate();
   const [plan, ustawPlan] = useState<PlanProdukcji>(pustyPlan);
   const [maszyny, ustawMaszyny] = useState<MaszynaOpcja[]>([]);
   const [wybranaMaszyna, ustawWybranaMaszyne] = useState('wszystkie');
@@ -348,7 +362,10 @@ export default function PlanProdukcji() {
                                 {...dragProvided.dragHandleProps}
                                 className={dragSnapshot.isDragging ? 'rotate-[1deg]' : ''}
                               >
-                                <KartaZlecenia zlecenie={zlecenie} />
+                                <KartaZlecenia
+                                  zlecenie={zlecenie}
+                                  onKlik={() => navigate(`/zamowienia/${zlecenie.zamowienie.id}`)}
+                                />
                               </div>
                             )}
                           </Draggable>

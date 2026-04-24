@@ -29,6 +29,9 @@ const Maszyny = lazy(() => import('./strony/ustawienia/Maszyny'));
 const EdycjaMaszyny = lazy(() => import('./strony/ustawienia/EdycjaMaszyny'));
 const PaneleMeldunkowe = lazy(() => import('./strony/ustawienia/PaneleMeldunkowe'));
 const Checkin = lazy(() => import('./strony/Checkin'));
+const PanelProdukcja = lazy(() => import('./strony/PanelProdukcja'));
+const PanelPakowanie = lazy(() => import('./strony/PanelPakowanie'));
+const PanelOperacjiTablet = lazy(() => import('./strony/PanelOperacjiTablet'));
 
 const FallbackLadowania = (
   <div className='flex h-screen items-center justify-center text-sm text-slate-400'>
@@ -38,15 +41,22 @@ const FallbackLadowania = (
 
 function App() {
   const czyCheckin = window.location.pathname.startsWith('/checkin');
+  const czyPanelTabletowy =
+    window.location.pathname.startsWith('/panel-produkcja') ||
+    window.location.pathname.startsWith('/panel-pakowanie');
   const { uzytkownik, ladowanie } = useAutentykacja();
 
-  if (czyCheckin) {
+  if (czyCheckin || czyPanelTabletowy) {
     return (
       <BrowserRouter>
         <Suspense fallback={FallbackLadowania}>
           <Routes>
             <Route path='/checkin' element={<Checkin />} />
-            <Route path='*' element={<Navigate to='/checkin' replace />} />
+            <Route path='/panel-produkcja' element={<PanelProdukcja />} />
+            <Route path='/panel-produkcja/zlecenie/:id' element={<PanelOperacjiTablet typ='PRODUKCJA' />} />
+            <Route path='/panel-pakowanie' element={<PanelPakowanie />} />
+            <Route path='/panel-pakowanie/zlecenie/:id' element={<PanelOperacjiTablet typ='PAKOWANIE' />} />
+            <Route path='*' element={<Navigate to={czyCheckin ? '/checkin' : '/panel-produkcja'} replace />} />
           </Routes>
         </Suspense>
       </BrowserRouter>

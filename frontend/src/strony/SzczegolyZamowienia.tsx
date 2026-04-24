@@ -3930,9 +3930,13 @@ export default function SzczegolyZamowienia() {
                               {zlecenie.maszyna.nazwa}
                             </td>
                             <td className='border-b border-r border-obramowanie px-4 py-4 align-top'>
-                              <span className='border-b border-dashed border-akcent text-akcent'>
+                              <button
+                                type='button'
+                                onClick={() => navigate(`/zlecenia-produkcyjne/${zlecenie.id}`)}
+                                className='border-b border-dashed border-akcent text-akcent transition hover:text-akcent-hover'
+                              >
                                 {zlecenie.numer}
-                              </span>
+                              </button>
                             </td>
                             <td className='border-b border-r border-obramowanie px-4 py-4 align-top text-tekst-glowny'>
                               {formatujDateGodzine(zlecenie.planowanyStop)}

@@ -101,6 +101,7 @@ export default function Produkty() {
   const [czyModalSzczegolowOtwarty, ustawCzyModalSzczegolowOtwarty] = useState(false);
   const [ladowanieSzczegolow, ustawLadowanieSzczegolow] = useState(false);
   const [bladSzczegolow, ustawBladSzczegolow] = useState('');
+  const [podgladZdjecia, ustawPodgladZdjecia] = useState<{ src: string; alt: string } | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -227,7 +228,8 @@ export default function Produkty() {
             <img
               src={produkt.zdjecie}
               alt={produkt.nazwa}
-              className='h-12 w-12 rounded object-contain bg-slate-800'
+              className='h-12 w-12 rounded object-contain bg-slate-800 cursor-zoom-in'
+              onClick={() => ustawPodgladZdjecia({ src: produkt.zdjecie!, alt: produkt.nazwa })}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
             />
           ) : (
@@ -236,7 +238,21 @@ export default function Produkty() {
             </div>
           ),
       },
-      { klucz: 'nazwa', naglowek: 'Nazwa', sortowalny: true, szerokosc: '240px' },
+      {
+        klucz: 'nazwa',
+        naglowek: 'Nazwa',
+        sortowalny: true,
+        szerokosc: '240px',
+        renderuj: (produkt) => (
+          <button
+            type='button'
+            onClick={() => navigate(`/produkty/${produkt.id}/edytuj`)}
+            className='text-left hover:text-akcent hover:underline transition-colors cursor-pointer'
+          >
+            {produkt.nazwa}
+          </button>
+        ),
+      },
       {
         klucz: 'ean',
         naglowek: 'EAN',
@@ -593,6 +609,26 @@ export default function Produkty() {
           </div>
         )}
       </Modal>
+
+      {podgladZdjecia && (
+        <div
+          className='fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm'
+          onClick={() => ustawPodgladZdjecia(null)}
+        >
+          <button
+            className='absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20'
+            onClick={() => ustawPodgladZdjecia(null)}
+          >
+            <X size={24} />
+          </button>
+          <img
+            src={podgladZdjecia.src}
+            alt={podgladZdjecia.alt}
+            className='max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl'
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

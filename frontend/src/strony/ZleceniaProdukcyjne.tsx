@@ -1856,7 +1856,6 @@ export default function ZleceniaProdukcyjne() {
                       <td className='border-b border-r border-obramowanie px-4 py-3 align-middle text-center'>
                         <div className='inline-flex items-center gap-2 text-tekst-glowny'>
                           <span>{formatujNormatywnyCzas(zlecenie.iloscPlan, zlecenie.normaSztGodz)}</span>
-                          <Pencil className='h-3.5 w-3.5 text-akcent' />
                         </div>
                       </td>
                       <td className='border-b border-r border-obramowanie px-4 py-3 align-middle text-center'>
