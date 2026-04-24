@@ -3,6 +3,50 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+const STATUSY_KONCOWE_ZAMOWIENIA = new Set(['WYDANE', 'ZAMKNIETE', 'ANULOWANE']);
+
+function czyMoznaNadpisacStatusZamowienia(status: string) {
+  return !STATUSY_KONCOWE_ZAMOWIENIA.has(status);
+}
+
+function czyWszystkieZleceniaSaGotowe(zlecenia: Array<{ status: string }>) {
+  return zlecenia.length > 0 && zlecenia.every((zlecenie) => zlecenie.status === 'GOTOWE');
+}
+
+async function zsynchronizujStatusyGotowychZamowien(
+  zamowienia: Array<{ id: number; status: string; zlecenia?: Array<{ status: string }> }>
+) {
+  const identyfikatoryDoAktualizacji = zamowienia
+    .filter(
+      (zamowienie) =>
+        czyMoznaNadpisacStatusZamowienia(zamowienie.status) &&
+        czyWszystkieZleceniaSaGotowe(zamowienie.zlecenia ?? [])
+    )
+    .map((zamowienie) => zamowienie.id);
+
+  if (identyfikatoryDoAktualizacji.length === 0) {
+    return;
+  }
+
+  await prisma.zamowienie.updateMany({
+    where: { id: { in: identyfikatoryDoAktualizacji } },
+    data: { status: 'GOTOWE' },
+  });
+}
+
+function zmapujStatusZamowienia<T extends { status: string; zlecenia?: Array<{ status: string }> }>(
+  zamowienie: T
+) {
+  if (
+    czyMoznaNadpisacStatusZamowienia(zamowienie.status) &&
+    czyWszystkieZleceniaSaGotowe(zamowienie.zlecenia ?? [])
+  ) {
+    return { ...zamowienie, status: 'GOTOWE' };
+  }
+
+  return zamowienie;
+}
+
 async function wygenerujUnikalneIdProdioZamowienia(): Promise<string> {
   for (let proba = 0; proba < 20; proba += 1) {
     const kandydat = `ZAM-${String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')}`;
@@ -30,8 +74,32 @@ export async function pobierzZamowienia(req: Request, res: Response): Promise<vo
     const where: Record<string, unknown> = {};
     if (szukaj) where.OR = [{ idProdio: { contains: szukaj, mode: 'insensitive' } }, { zewnetrznyNumer: { contains: szukaj, mode: 'insensitive' } }];
     if (status) where.status = status;
-    const [dane, lacznie] = await Promise.all([prisma.zamowienie.findMany({ where, skip: (strona - 1) * iloscNaStrone, take: iloscNaStrone, orderBy: { [sortPole]: sortKierunek }, include: { klient: { select: { id: true, nazwa: true } }, pozycje: { include: { produkt: { select: { id: true, nazwa: true, idProdio: true, zdjecie: true } } } } } }), prisma.zamowienie.count({ where })]);
-    res.json({ sukces: true, dane, lacznie, strona, iloscNaStrone });
+    const [dane, lacznie] = await Promise.all([
+      prisma.zamowienie.findMany({
+        where,
+        skip: (strona - 1) * iloscNaStrone,
+        take: iloscNaStrone,
+        orderBy: { [sortPole]: sortKierunek },
+        include: {
+          klient: { select: { id: true, nazwa: true } },
+          pozycje: {
+            include: { produkt: { select: { id: true, nazwa: true, idProdio: true, zdjecie: true } } },
+          },
+          zlecenia: {
+            select: { status: true },
+          },
+        },
+      }),
+      prisma.zamowienie.count({ where }),
+    ]);
+    await zsynchronizujStatusyGotowychZamowien(dane);
+    res.json({
+      sukces: true,
+      dane: dane.map((zamowienie) => zmapujStatusZamowienia(zamowienie)),
+      lacznie,
+      strona,
+      iloscNaStrone,
+    });
   } catch (blad) {
     console.error('[pobierzZamowienia]', blad);
     res.status(500).json({ sukces: false, wiadomosc: 'Błąd serwera' });
@@ -115,6 +183,8 @@ export async function pobierzZamowienieZgrupowane(req: Request, res: Response): 
 
     const pierwszyKlient = zamowienia.find((zamowienie) => zamowienie.klient)?.klient ?? null;
 
+    await zsynchronizujStatusyGotowychZamowien(zamowienia);
+
     res.json({
       sukces: true,
       dane: {
@@ -132,7 +202,7 @@ export async function pobierzZamowienieZgrupowane(req: Request, res: Response): 
 
           return najpozniejsza;
         }, null),
-        zamowienia,
+        zamowienia: zamowienia.map((zamowienie) => zmapujStatusZamowienia(zamowienie)),
       },
     });
   } catch (blad) {
@@ -197,7 +267,8 @@ export async function pobierzZamowienie(req: Request, res: Response): Promise<vo
   try {
     const zamowienie = await prisma.zamowienie.findUnique({ where: { id: parseInt(req.params.id) }, include: { klient: true, pozycje: { include: { produkt: true } }, zlecenia: { include: { maszyna: true } } } });
     if (!zamowienie) { res.status(404).json({ sukces: false, wiadomosc: 'Zamówienie nie istnieje' }); return; }
-    res.json({ sukces: true, dane: zamowienie });
+    await zsynchronizujStatusyGotowychZamowien([zamowienie]);
+    res.json({ sukces: true, dane: zmapujStatusZamowienia(zamowienie) });
   } catch (blad) {
     console.error('[pobierzZamowienie]', blad);
     res.status(500).json({ sukces: false, wiadomosc: 'Błąd serwera' });

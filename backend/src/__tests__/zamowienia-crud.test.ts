@@ -2,9 +2,10 @@ const mockZam = { id: 1, idProdio: 'ZAM-001', klient: null, pozycje: [], zleceni
 const mockFindUnique = jest.fn().mockResolvedValue(mockZam);
 const mockDelete = jest.fn().mockResolvedValue({ id: 1 });
 const mockCreate = jest.fn().mockResolvedValue(mockZam);
+const mockUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
 jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(() => ({
-    zamowienie: { findUnique: mockFindUnique, delete: mockDelete, create: mockCreate },
+    zamowienie: { findUnique: mockFindUnique, delete: mockDelete, create: mockCreate, updateMany: mockUpdateMany },
   })),
 }));
 import { pobierzZamowienie, usunZamowienie, utworzZamowienie } from '../kontrolery/kontrolerZamowien';
@@ -22,6 +23,7 @@ beforeEach(() => {
   mockFindUnique.mockClear();
   mockDelete.mockClear();
   mockCreate.mockClear();
+  mockUpdateMany.mockClear();
 });
 describe('utworzZamowienie', () => {
   it('generuje idProdio gdy nie zostalo podane', async () => {

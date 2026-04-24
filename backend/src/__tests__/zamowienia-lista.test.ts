@@ -1,8 +1,13 @@
+const mockFindMany = jest.fn();
+const mockCount = jest.fn();
+const mockUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+
 jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(() => ({
     zamowienie: {
-      findMany: jest.fn().mockResolvedValue([{ id: 1, idProdio: 'ZAM-001', klient: null, pozycje: [] }]),
-      count: jest.fn().mockResolvedValue(3),
+      findMany: mockFindMany,
+      count: mockCount,
+      updateMany: mockUpdateMany,
     },
   })),
 }));
@@ -16,6 +21,12 @@ const mockRes = () => {
   return r;
 };
 const mockReq = (overrides = {}) => ({ query: {}, params: {}, body: {}, ...overrides } as unknown as Request);
+
+beforeEach(() => {
+  mockFindMany.mockResolvedValue([{ id: 1, idProdio: 'ZAM-001', status: 'NOWE', klient: null, pozycje: [], zlecenia: [] }]);
+  mockCount.mockResolvedValue(3);
+  mockUpdateMany.mockClear();
+});
 
 describe('pobierzZamowienia', () => {
   it('zwraca liste z paginacja', async () => {
@@ -32,6 +43,29 @@ describe('pobierzZamowienia', () => {
     const res = mockRes();
     await pobierzZamowienia(mockReq({ query: { strona: '2', szukaj: 'test', status: 'NOWE' } }), res);
     expect((res.json as jest.Mock).mock.calls[0][0].sukces).toBe(true);
+  });
+
+  it('zwraca status GOTOWE gdy wszystkie zlecenia zamowienia sa gotowe', async () => {
+    mockFindMany.mockResolvedValueOnce([
+      {
+        id: 1,
+        idProdio: 'ZAM-001',
+        status: 'NOWE',
+        klient: null,
+        pozycje: [],
+        zlecenia: [{ status: 'GOTOWE' }, { status: 'GOTOWE' }],
+      },
+    ]);
+
+    const res = mockRes();
+    await pobierzZamowienia(mockReq(), res);
+
+    const wynik = (res.json as jest.Mock).mock.calls[0][0];
+    expect(wynik.dane[0].status).toBe('GOTOWE');
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: { in: [1] } },
+      data: { status: 'GOTOWE' },
+    });
   });
 });
 

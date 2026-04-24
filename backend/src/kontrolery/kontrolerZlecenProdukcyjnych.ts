@@ -4,6 +4,39 @@ import { PrismaClient, StatusZlecenia } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const STATUSY_UKONCZONE: StatusZlecenia[] = ['GOTOWE', 'ANULOWANE'];
+const STATUSY_KONCOWE_ZAMOWIENIA = new Set(['WYDANE', 'ZAMKNIETE', 'ANULOWANE']);
+
+export async function zsynchronizujStatusZamowieniaPoZmianieZlecenia(zamowienieId: number) {
+  const zamowienie = await prisma.zamowienie.findUnique({
+    where: { id: zamowienieId },
+    select: {
+      id: true,
+      status: true,
+      zlecenia: {
+        select: {
+          status: true,
+        },
+      },
+    },
+  });
+
+  if (!zamowienie || STATUSY_KONCOWE_ZAMOWIENIA.has(zamowienie.status)) {
+    return;
+  }
+
+  const wszystkieZleceniaGotowe =
+    zamowienie.zlecenia.length > 0 &&
+    zamowienie.zlecenia.every((zlecenie) => zlecenie.status === 'GOTOWE');
+
+  if (!wszystkieZleceniaGotowe) {
+    return;
+  }
+
+  await prisma.zamowienie.update({
+    where: { id: zamowienieId },
+    data: { status: 'GOTOWE' },
+  });
+}
 
 function parseIntValue(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -617,6 +650,7 @@ export async function zaktualizujZlecenieProdukcyjne(req: Request, res: Response
   try {
     const id = parseInt(req.params.id, 10);
     const status = req.body.status as StatusZlecenia | undefined;
+    const maszynaId = parseIntValue(req.body.maszynaId);
     const poprzednikId = parseNullableIntValue(req.body.poprzednikId);
     const bladPoprzednika = await walidujPoprzednik(id, poprzednikId ?? undefined, status);
 
@@ -625,10 +659,17 @@ export async function zaktualizujZlecenieProdukcyjne(req: Request, res: Response
       return;
     }
 
+    if (!maszynaId) {
+      res.status(400).json({ sukces: false, wiadomosc: 'Maszyna jest wymagana.' });
+      return;
+    }
+
     const zlecenie = await prisma.zlecenieProdukcyjne.update({
       where: { id },
       data: {
-        maszynaId: parseIntValue(req.body.maszynaId),
+        maszyna: {
+          connect: { id: maszynaId },
+        },
         status,
         aktywne: req.body.aktywne,
         iloscPlan: parseIntValue(req.body.iloscPlan),
@@ -650,6 +691,8 @@ export async function zaktualizujZlecenieProdukcyjne(req: Request, res: Response
         maszynaKoncowa: req.body.maszynaKoncowa,
       },
     });
+
+    await zsynchronizujStatusZamowieniaPoZmianieZlecenia(zlecenie.zamowienieId);
 
     res.json({ sukces: true, dane: zlecenie });
   } catch {
